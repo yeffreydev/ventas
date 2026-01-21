@@ -1,0 +1,184 @@
+@import "tailwindcss";
+@import "flowbite-react/plugin/tailwindcss";
+@variant dark (&:where(.dark, .dark *));
+@source "../.flowbite-react/class-list.json";
+@import "flowbite/src/themes/default";
+@plugin "flowbite/plugin";
+
+/* Light theme (default) */
+:root {
+  --primary: #0000FF;
+  --secondary: #ffffff;
+  --text: #0A1629;
+  --background: #f8f9fa;
+  --foreground: #0A1629;
+  --border: #e5e7eb;
+  --hover-bg: #f3f4f6;
+  --input-bg: #ffffff;
+  --input-border: #d1d5db;
+  --card-bg: #ffffff;
+  --card-shadow: rgba(0, 0, 0, 0.1);
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+}
+
+/* Dark theme */
+:root[data-theme="dark"],
+:root.dark {
+  --primary: #3b82f6;
+  --secondary: #2d3748;
+  --text: #e5e7eb;
+  --background: #1a202c;
+  --foreground: #e5e7eb;
+  --border: #4a5568;
+  --hover-bg: #2d3748;
+  --input-bg: #2d3748;
+  --input-border: #718096;
+  --card-bg: #2d3748;
+  --card-shadow: rgba(0, 0, 0, 0.2);
+  --text-secondary: #cbd5e0;
+  --text-tertiary: #a0aec0;
+}
+
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-text: var(--text);
+  --color-text: var(--text);
+  --font-sans: var(--font-sans);
+  --font-mono: monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 0.9375rem; /* 15px - Slightly smaller base size */
+  line-height: 1.6; /* More breathing room */
+  letter-spacing: -0.015em; /* Tighter tracking for elegance */
+  transition: background-color 0.1s ease, color 0.1s ease;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Chat message animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.1s ease-out;
+}
+
+/* Smooth transitions for theme changes */
+* {
+  @apply transition-colors duration-10;
+}
+
+/* Input styles for both themes */
+input,
+textarea,
+select {
+  background-color: var(--input-bg);
+  color: var(--foreground);
+  border-color: var(--input-border);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Border colors */
+.border {
+  border-color: var(--border);
+}
+
+
+
+/* Card styles */
+.card {
+  background-color: var(--card-bg);
+  box-shadow: 0 1px 3px var(--card-shadow);
+}
+
+/* Scrollbar styling for dark mode */
+:root.dark ::-webkit-scrollbar {
+  width: 8px;
+}
+
+:root.dark ::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+:root.dark ::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+:root.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Chat Layout Improvements */
+.chat-messages-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-messages-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+.chat-input-fixed {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+}
+
+/* Smooth scrollbar for chat */
+.chat-messages-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-messages-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-messages-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.chat-messages-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* Message bubble improvements */
+.message-bubble {
+  word-wrap: break-word;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+/* Prevent layout shift on image load */
+.message-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
