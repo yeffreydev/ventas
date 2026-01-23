@@ -1,11 +1,57 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { createClient } from '../utils/supabase/client';
-import { Workspace, WorkspaceMember, WorkspaceContextType } from '../types/workspace';
+import { Workspace, WorkspaceContextType } from '../types/workspace';
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
+
+// Cache for workspaces to prevent repeated fetches
+const WORKSPACE_CACHE_KEY = 'workspace_cache';
+const WORKSPACE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+interface WorkspaceCache {
+  workspaces: Workspace[];
+  currentWorkspaceId: string | null;
+  timestamp: number;
+}
+
+function getWorkspaceCache(): WorkspaceCache | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(WORKSPACE_CACHE_KEY);
+    if (!cached) return null;
+    const data = JSON.parse(cached) as WorkspaceCache;
+    // Check if cache is still valid
+    if (Date.now() - data.timestamp > WORKSPACE_CACHE_TTL) {
+      localStorage.removeItem(WORKSPACE_CACHE_KEY);
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function setWorkspaceCache(workspaces: Workspace[], currentWorkspaceId: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    const cache: WorkspaceCache = {
+      workspaces,
+      currentWorkspaceId,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(WORKSPACE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearWorkspaceCache() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(WORKSPACE_CACHE_KEY);
+}
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -14,8 +60,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSwitching, setIsSwitching] = useState(false);
   const router = useRouter();
-  const pathname = usePathname();
   const supabase = createClient();
+  const fetchedRef = useRef(false);
+  const mountedRef = useRef(true);
 
   // Helper to load persisted workspace preference
   const getPersistedWorkspaceId = () => {
@@ -31,33 +78,54 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const fetchWorkspaces = useCallback(async () => {
-    console.log("Fetching workspaces...");
+  const fetchWorkspaces = useCallback(async (forceRefresh = false) => {
+    // Prevent duplicate fetches
+    if (fetchedRef.current && !forceRefresh) return;
+    
     try {
+      // Try to use cache first for instant UI
+      if (!forceRefresh) {
+        const cache = getWorkspaceCache();
+        if (cache && cache.workspaces.length > 0) {
+          setWorkspaces(cache.workspaces);
+          const lastId = getPersistedWorkspaceId() || cache.currentWorkspaceId;
+          const ws = cache.workspaces.find((w: any) => w.id === lastId) || cache.workspaces[0];
+          if (ws) {
+            setCurrentWorkspace(ws);
+            setUserRole((ws as any).role || ((ws as any).is_owner ? 'admin' : 'agent'));
+          }
+          setIsLoading(false);
+          // Continue to fetch fresh data in background
+        }
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
-        setWorkspaces([]);
-        setCurrentWorkspace(null);
-        setIsLoading(false);
+        if (mountedRef.current) {
+          setWorkspaces([]);
+          setCurrentWorkspace(null);
+          setIsLoading(false);
+          clearWorkspaceCache();
+        }
         return;
       }
 
-      // Fetch all accessible workspaces (owned + guest) using the view
+      // Fetch workspaces
       const { data, error } = await supabase
         .from('user_accessible_workspaces')
         .select('*')
         .eq('user_id', user.id);
 
       if (error) {
-        console.error('Error fetching workspaces:', error.message, error.details, error.hint, error.code);
+        console.error('Error fetching workspaces:', error.message);
         return;
       }
 
-      // Check if data is null or empty array to avoid issues
-      const fetchedWorkspaces = data || [];
-      console.log("Fetched workspaces:", fetchedWorkspaces.length, fetchedWorkspaces.map((w: any) => ({ id: w.id, name: w.name, is_owner: w.is_owner })));
+      if (!mountedRef.current) return;
 
-      // Sort: owned workspaces first, then guest workspaces
+      const fetchedWorkspaces = data || [];
+      
+      // Sort: owned workspaces first
       const sortedWorkspaces = fetchedWorkspaces.sort((a: any, b: any) => {
         if (a.is_owner && !b.is_owner) return -1;
         if (!a.is_owner && b.is_owner) return 1;
@@ -75,140 +143,95 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (!selectedWorkspace && sortedWorkspaces.length > 0) {
-        // Default to first owned workspace, or first guest if no owned
         selectedWorkspace = sortedWorkspaces.find((w: any) => w.is_owner) || sortedWorkspaces[0] as unknown as Workspace;
       }
 
       if (selectedWorkspace) {
         setCurrentWorkspace(selectedWorkspace);
         persistWorkspaceId(selectedWorkspace.id);
-        
-        // Set role based on access_type
         const ws = selectedWorkspace as any;
         setUserRole(ws.role || (ws.is_owner ? 'admin' : 'agent'));
+        
+        // Update cache
+        setWorkspaceCache(sortedWorkspaces as unknown as Workspace[], selectedWorkspace.id);
       } else {
-        // No workspaces found
         setCurrentWorkspace(null);
         setUserRole(null);
+        clearWorkspaceCache();
       }
 
+      fetchedRef.current = true;
     } catch (err) {
       console.error('Unexpected error fetching workspaces:', err);
     } finally {
-      setIsLoading(false);
+      if (mountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [supabase]);
 
   // Handle workspace refresh after invitation acceptance
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.location.search.includes('workspace_refresh=true')) {
-      // Get the invited workspace ID if present
-      const url = new URL(window.location.href);
-      const invitedWorkspaceId = url.searchParams.get('invited_workspace');
+    if (typeof window === 'undefined') return;
+    if (!window.location.search.includes('workspace_refresh=true')) return;
 
-      const handleWorkspaceRefresh = async () => {
-        console.log('Starting workspace refresh after invitation acceptance...');
+    const url = new URL(window.location.href);
+    const invitedWorkspaceId = url.searchParams.get('invited_workspace');
 
-        // Force a fresh fetch from the database
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return;
+    const handleWorkspaceRefresh = async () => {
+      clearWorkspaceCache();
+      fetchedRef.current = false;
+      await fetchWorkspaces(true);
 
-          // Fetch workspaces directly (bypass cache/state)
-          const { data, error } = await supabase
-            .from('user_accessible_workspaces')
-            .select('*')
-            .eq('user_id', user.id);
-
-          if (error) {
-            console.error('Error fetching workspaces during refresh:', error);
-            return;
-          }
-
-          const fetchedWorkspaces = data || [];
-          console.log('Directly fetched workspaces:', fetchedWorkspaces.length, fetchedWorkspaces.map((w: any) => ({ id: w.id, name: w.name })));
-
-          // Update state with fresh data
-          const sortedWorkspaces = fetchedWorkspaces.sort((a: any, b: any) => {
-            if (a.is_owner && !b.is_owner) return -1;
-            if (!a.is_owner && b.is_owner) return 1;
-            return a.name.localeCompare(b.name);
-          });
-
-          setWorkspaces(sortedWorkspaces as unknown as Workspace[]);
-
-          // Now try to find and select the invited workspace
-          if (invitedWorkspaceId) {
-            const invitedWorkspace = sortedWorkspaces.find((w: any) => w.id === invitedWorkspaceId);
-            if (invitedWorkspace) {
-              console.log('Found and selecting invited workspace:', invitedWorkspace.name);
-              setCurrentWorkspace(invitedWorkspace as Workspace);
-              persistWorkspaceId(invitedWorkspaceId);
-
-              // Set role based on workspace access_type and role field
-              const ws = invitedWorkspace as any;
-              setUserRole(ws.role || (ws.is_owner ? 'admin' : 'agent'));
-            } else {
-              console.warn('Invited workspace not found in refreshed data:', invitedWorkspaceId);
-              console.log('Available workspace IDs:', sortedWorkspaces.map((w: any) => w.id));
-            }
-          }
-
-        } catch (err) {
-          console.error('Error during workspace refresh:', err);
+      if (invitedWorkspaceId && mountedRef.current) {
+        const invitedWorkspace = workspaces.find((w: any) => w.id === invitedWorkspaceId);
+        if (invitedWorkspace) {
+          setCurrentWorkspace(invitedWorkspace);
+          persistWorkspaceId(invitedWorkspaceId);
+          const ws = invitedWorkspace as any;
+          setUserRole(ws.role || (ws.is_owner ? 'admin' : 'agent'));
         }
+      }
 
-        // Clean up URL parameters
-        url.searchParams.delete('workspace_refresh');
-        url.searchParams.delete('invited_workspace');
-        window.history.replaceState({}, '', url.pathname + url.search);
-      };
+      // Clean up URL parameters
+      url.searchParams.delete('workspace_refresh');
+      url.searchParams.delete('invited_workspace');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    };
 
-      const timer = setTimeout(handleWorkspaceRefresh, 1500); // Give more time for DB to update
-      return () => clearTimeout(timer);
-    }
-  }, [supabase]); // Only depend on supabase, not workspaces or fetchWorkspaces
+    const timer = setTimeout(handleWorkspaceRefresh, 500);
+    return () => clearTimeout(timer);
+  }, []);
 
-  // Fetch workspaces on mount and auth changes
+  // Initial fetch on mount
   useEffect(() => {
+    mountedRef.current = true;
     fetchWorkspaces();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event: string, session: any) => {
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        fetchWorkspaces();
-      } else if (event === 'SIGNED_OUT') {
-        setWorkspaces([]);
-        setCurrentWorkspace(null);
-        setUserRole(null);
-      }
-    });
-
     return () => {
-      subscription.unsubscribe();
+      mountedRef.current = false;
     };
-  }, []); // Remove fetchWorkspaces from dependencies to prevent infinite loop
+  }, []);
 
   const switchWorkspace = async (workspaceId: string) => {
     const workspace = workspaces.find(w => w.id === workspaceId);
     if (workspace && workspace.id !== currentWorkspace?.id) {
-      // Show loader
       setIsSwitching(true);
       
       try {
-        // Update workspace state immediately
         setCurrentWorkspace(workspace);
         persistWorkspaceId(workspaceId);
         
-        // Set role based on workspace access_type and role field
         const ws = workspace as any;
         setUserRole(ws.role || (ws.is_owner ? 'admin' : 'agent'));
         
-        // Small delay to show the loader
-        await new Promise(resolve => setTimeout(resolve, 300));
+        // Update cache
+        setWorkspaceCache(workspaces, workspaceId);
         
-        // Navigate to dashboard to refresh data
+        // Small delay for UX
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
         router.push('/dashboard');
-        
       } catch (error) {
         console.error('Error switching workspace:', error);
       } finally {
@@ -235,8 +258,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
       if (error) throw error;
 
-      // Trigger will add the member, but we should refresh to be sure and get the updated list
-      await fetchWorkspaces();
+      // Clear cache and refetch
+      clearWorkspaceCache();
+      fetchedRef.current = false;
+      await fetchWorkspaces(true);
       
       return data as Workspace;
     } catch (error) {
@@ -246,7 +271,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   };
   
   const refreshWorkspaces = async () => {
-    await fetchWorkspaces();
+    clearWorkspaceCache();
+    fetchedRef.current = false;
+    await fetchWorkspaces(true);
   };
 
   return (

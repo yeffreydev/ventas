@@ -2,20 +2,26 @@ import { redirect } from "next/navigation";
 import { createClient } from "./utils/supabase/server";
 import { cookies } from "next/headers";
 
+// Force dynamic to ensure fresh auth check
+export const dynamic = 'force-dynamic';
+
+// Disable static generation
+export const revalidate = 0;
+
 export default async function Home() {
-  const supabase = await createClient(cookies());
-  const { data: { user } } = await supabase.auth.getUser();
+  try {
+    const supabase = await createClient(cookies());
+    
+    // Use getSession instead of getUser for faster check
+    const { data: { session } } = await supabase.auth.getSession();
 
-  if (user) {
-    // Check if user has completed onboarding
-    const onboardingCompleted = user.user_metadata?.onboarding_completed;
-
-    if (!onboardingCompleted) {
+    if (session?.user) {
       redirect("/dashboard");
     } else {
-      redirect("/dashboard");
+      redirect("/login");
     }
-  } else {
+  } catch {
+    // On any error, redirect to login
     redirect("/login");
   }
 }

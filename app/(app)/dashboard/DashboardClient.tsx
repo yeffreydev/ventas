@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   HiUsers,
   HiChatAlt2,
-  HiTrendingUp,
-  HiClock,
-  HiCheckCircle,
   HiExclamation,
   HiChartBar,
   HiPhone,
   HiShoppingCart,
+  HiCheckCircle,
 } from "react-icons/hi";
 import {
   FaWhatsapp,
@@ -35,30 +33,115 @@ interface DashboardClientProps {
   initialStats: DashboardStats;
 }
 
+// Cache for dashboard stats
+const STATS_CACHE_KEY = 'dashboard_stats_cache';
+const STATS_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+interface StatsCache {
+  stats: DashboardStats;
+  workspaceId: string;
+  timestamp: number;
+}
+
+function getCachedStats(workspaceId: string): DashboardStats | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(STATS_CACHE_KEY);
+    if (!cached) return null;
+    const data = JSON.parse(cached) as StatsCache;
+    if (data.workspaceId !== workspaceId) return null;
+    if (Date.now() - data.timestamp > STATS_CACHE_TTL) {
+      localStorage.removeItem(STATS_CACHE_KEY);
+      return null;
+    }
+    return data.stats;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedStats(stats: DashboardStats, workspaceId: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const cache: StatsCache = {
+      stats,
+      workspaceId,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(STATS_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export default function DashboardClient({ initialStats }: DashboardClientProps) {
   const [stats, setStats] = useState<DashboardStats>(initialStats);
   const [isLoading, setIsLoading] = useState(true);
-  const { currentWorkspace } = useWorkspace();
+  const { currentWorkspace, isLoading: isWorkspaceLoading } = useWorkspace();
+  const fetchedRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    // Refresh stats when workspace context is available
-    if (currentWorkspace?.id) {
-       setIsLoading(true);
-       getDashboardStats(currentWorkspace.id).then((freshStats) => {
-         setStats(freshStats);
-       }).catch(err => console.error("Failed to refresh dashboard stats for workspace:", err))
-       .finally(() => setIsLoading(false));
-    } else {
-      // If no workspace yet, keep loading or just show what we have?
-      // Assuming workspace loads quickly.
-    }
+    mountedRef.current = true;
+    
+    const loadStats = async () => {
+      if (!currentWorkspace?.id) return;
+      
+      // Skip if we already fetched for this workspace
+      if (fetchedRef.current === currentWorkspace.id) return;
+      
+      // Try cache first for instant display
+      const cached = getCachedStats(currentWorkspace.id);
+      if (cached) {
+        setStats(cached);
+        setIsLoading(false);
+        fetchedRef.current = currentWorkspace.id;
+        
+        // Still fetch fresh data in background
+        getDashboardStats(currentWorkspace.id)
+          .then((freshStats) => {
+            if (mountedRef.current) {
+              setStats(freshStats);
+              setCachedStats(freshStats, currentWorkspace.id);
+            }
+          })
+          .catch(() => {});
+        return;
+      }
+      
+      // No cache, fetch from server
+      setIsLoading(true);
+      try {
+        const freshStats = await getDashboardStats(currentWorkspace.id);
+        if (mountedRef.current) {
+          setStats(freshStats);
+          setCachedStats(freshStats, currentWorkspace.id);
+          fetchedRef.current = currentWorkspace.id;
+        }
+      } catch (err) {
+        console.error("Failed to fetch dashboard stats:", err);
+      } finally {
+        if (mountedRef.current) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadStats();
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, [currentWorkspace?.id]);
+
+  // Show loading state only while workspace is loading
+  const showLoading = isLoading && !stats.totalCustomers && !stats.revenue;
 
   const channelData = [
     {
       name: "WhatsApp",
       icon: <FaWhatsapp className="w-full h-full" />,
-      count: 856, // Mock for now
+      count: 856,
       color: "text-green-600 dark:text-green-400",
       bgColor: "bg-green-100 dark:bg-green-900/30",
       percentage: 49,
@@ -66,7 +149,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
     {
       name: "Messenger",
       icon: <FaFacebookMessenger className="w-full h-full" />,
-      count: 432, // Mock
+      count: 432,
       color: "text-blue-600 dark:text-blue-400",
       bgColor: "bg-blue-100 dark:bg-blue-900/30",
       percentage: 25,
@@ -74,7 +157,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
     {
       name: "Instagram",
       icon: <FaInstagram className="w-full h-full" />,
-      count: 289, // Mock
+      count: 289,
       color: "text-pink-600 dark:text-pink-400",
       bgColor: "bg-pink-100 dark:bg-pink-900/30",
       percentage: 17,
@@ -82,7 +165,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
     {
       name: "Telegram",
       icon: <FaTelegram className="w-full h-full" />,
-      count: 156, // Mock
+      count: 156,
       color: "text-sky-600 dark:text-sky-400",
       bgColor: "bg-sky-100 dark:bg-sky-900/30",
       percentage: 9,
@@ -120,8 +203,6 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
     },
   ];
 
-  // Transform recent activities from props to match ActivityFeed component expectation
-  // Note: ActivityFeed component expects 'icon' which is a ReactNode. We need to map types to icons.
   const mappedActivities = stats.recentActivities.map(activity => ({
       ...activity,
       icon: getIconForType(activity.type)
@@ -167,13 +248,13 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
             value={stats.totalCustomers}
             icon={<HiUsers className="w-full h-full" />}
             trend={{
-              value: "+12%", // Calculate real trend later
+              value: "+12%",
               isPositive: true,
               label: "este mes",
             }}
             iconBgColor="bg-blue-100 dark:bg-blue-900/30"
             iconColor="text-blue-600 dark:text-blue-400"
-            loading={isLoading}
+            loading={showLoading}
           />
           <StatCard
             title="Ingresos Totales"
@@ -186,7 +267,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
             }}
              iconBgColor="bg-green-100 dark:bg-green-900/30"
             iconColor="text-green-600 dark:text-green-400"
-            loading={isLoading}
+            loading={showLoading}
           />
            <StatCard
             title="Pedidos Pendientes"
@@ -199,7 +280,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
             }}
             iconBgColor="bg-orange-100 dark:bg-orange-900/30"
             iconColor="text-orange-600 dark:text-orange-400"
-            loading={isLoading}
+            loading={showLoading}
           />
          
           <StatCard
@@ -213,23 +294,8 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
             }}
             iconBgColor="bg-green-100 dark:bg-green-900/30"
             iconColor="text-green-600 dark:text-green-400"
-            loading={isLoading}
+            loading={showLoading}
           />
-          {/* 
-          <StatCard
-            title="Tiempo de Respuesta"
-            value="2m" // Mock
-            icon={<HiClock className="w-full h-full" />}
-            trend={{
-              value: "-15%",
-              isPositive: true,
-              label: "más rápido",
-            }}
-            iconBgColor="bg-yellow-100 dark:bg-yellow-900/30"
-            iconColor="text-yellow-600 dark:text-yellow-400"
-            loading={isLoading}
-          />
-          */}
            <StatCard
             title="Productos stock bajo"
             value={stats.lowStockProducts}
@@ -241,13 +307,13 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
             }}
             iconBgColor="bg-red-100 dark:bg-red-900/30"
             iconColor="text-red-600 dark:text-red-400"
-            loading={isLoading}
+            loading={showLoading}
           />
         </div>
 
         {/* Main Charts - Full width trend chart */}
         <div className="grid grid-cols-1 gap-4 md:gap-6">
-          {isLoading ? (
+          {showLoading ? (
             <Skeleton className="h-[400px] w-full" />
           ) : (
             <ConversationsTrendChart />
@@ -256,7 +322,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
 
         {/* Charts Grid - 2 columns on desktop */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-          {isLoading ? (
+          {showLoading ? (
             <>
               <Skeleton className="h-[300px] w-full" />
               <Skeleton className="h-[300px] w-full" />
@@ -271,7 +337,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
 
         {/* Charts Grid - 2 columns on desktop */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-          {isLoading ? (
+          {showLoading ? (
              <>
                <Skeleton className="h-[300px] w-full" />
                <Skeleton className="h-[300px] w-full" />
@@ -289,7 +355,7 @@ export default function DashboardClient({ initialStats }: DashboardClientProps) 
 
         {/* Activity Feed - Full width */}
         <div className="grid grid-cols-1 gap-4 md:gap-6">
-          {isLoading ? (
+          {showLoading ? (
             <Skeleton className="h-[400px] w-full" />
           ) : (
             <ActivityFeed

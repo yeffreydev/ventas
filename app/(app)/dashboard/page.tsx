@@ -1,13 +1,20 @@
-import { Suspense } from "react";
 import DashboardClient from "./DashboardClient";
-import { getDashboardStats } from "./actions";
 
-export default async function DashboardPage() {
-  const stats = await getDashboardStats();
+// Make this a dynamic page to avoid blocking on server
+export const dynamic = 'force-dynamic';
 
-  return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center">Cargando...</div>}>
-      <DashboardClient initialStats={stats} />
-    </Suspense>
-  );
+// Default stats to show immediately while loading
+const defaultStats = {
+  totalCustomers: 0,
+  totalConversations: 0,
+  activeChats: 0,
+  revenue: 0,
+  pendingOrders: 0,
+  lowStockProducts: 0,
+  recentActivities: [],
+};
+
+export default function DashboardPage() {
+  // Don't await - let client fetch the data
+  return <DashboardClient initialStats={defaultStats} />;
 }

@@ -81,18 +81,18 @@ export default function AppLayout({
           const parsedUser = JSON.parse(cachedUser);
           setUser(parsedUser);
           setIsLoading(false);
+          // Don't return - still verify session in background
         } catch (e) {
           localStorage.removeItem('user_data');
         }
       }
 
-      // Then verify session with timeout
+      // Shorter timeout for faster perceived loading
       const timeoutId = setTimeout(() => {
         if (mounted && !user) {
-          console.warn('Session check timeout');
           setIsLoading(false);
         }
-      }, 3000); // 3 second timeout
+      }, 2000);
 
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
@@ -101,7 +101,6 @@ export default function AppLayout({
         
         if (mounted) {
           if (error) {
-            console.error('Session error:', error);
             setUser(null);
             localStorage.removeItem('user_data');
             setIsLoading(false);
@@ -109,11 +108,9 @@ export default function AppLayout({
           }
 
           if (session?.user && session.expires_at && session.expires_at * 1000 > Date.now()) {
-            // Session is valid
             setUser(session.user);
             localStorage.setItem('user_data', JSON.stringify(session.user));
           } else {
-            // Session expired or no session
             setUser(null);
             localStorage.removeItem('user_data');
           }
@@ -121,7 +118,6 @@ export default function AppLayout({
         }
       } catch (error) {
         clearTimeout(timeoutId);
-        console.error('Error getting session:', error);
         if (mounted) {
           setIsLoading(false);
         }
@@ -130,35 +126,12 @@ export default function AppLayout({
 
     getUser();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: string, session: any) => {
-      if (mounted) {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          setUser(session?.user ?? null);
-          if (session?.user) {
-            localStorage.setItem('user_data', JSON.stringify(session.user));
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          localStorage.removeItem('user_data');
-        }
-        setIsLoading(false);
-      }
-    });
-
     return () => {
       mounted = false;
-      subscription.unsubscribe();
     };
   }, []);
 
-  // Sync invitation notifications
-  useEffect(() => {
-    if (user?.id) {
-        // Run once when user is loaded
-        fetch('/api/invitations/sync', { method: 'POST' })
-            .catch(err => console.error('Failed to sync notifications:', err));
-    }
-  }, [user?.id]);
+  // Invitation sync disabled for performance - notifications are disabled
 
   // Fetch user permissions
   useEffect(() => {
@@ -205,7 +178,7 @@ export default function AppLayout({
 
   const allMenuItems = [
 
-    { name: "Super Admin", icon: HiViewGrid, href: "/super-admin", permission: "super_admin" as Permission },
+    // { name: "Super Admin", icon: HiViewGrid, href: "/super-admin", permission: "super_admin" as Permission },
     { name: "Panel", icon: HiViewGrid, href: "/dashboard", permission: "dashboard" as Permission },
     { name: "Chats", icon: HiChat, href: "/chats", permission: "chats" as Permission },
     { name: "Asistente IA", icon: HiSparkles, href: "/assistance", permission: "chats" as Permission },
