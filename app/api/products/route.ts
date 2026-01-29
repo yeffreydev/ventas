@@ -1,18 +1,9 @@
 import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { requirePermission } from '@/app/lib/permissions';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
-async function checkWorkspaceAccess(supabase: any, workspaceId: string, userId: string): Promise<boolean> {
-  if (!workspaceId) return false;
-  const { data, error } = await supabase
-    .from('workspace_members')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('user_id', userId)
-    .single();
-
-  return !error && !!data;
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,7 +17,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const workspaceId = searchParams.get('workspace_id');
 
-    // Optional: if no workspaceId, strict mode returns error
+    // Permission check removed as per user request to start with universal access
     if (!workspaceId) {
         return NextResponse.json({ error: 'Workspace ID required' }, { status: 400 });
     }
@@ -80,8 +71,21 @@ export async function POST(request: NextRequest) {
       image_url,
       category_id,
       variants,
-      workspace_id // Required
+      workspace_id, // Required
+      min_stock_alert
     } = body;
+
+    if (!workspace_id) {
+      return NextResponse.json({ error: 'Workspace ID required' }, { status: 400 });
+    }
+
+    // Check permission with workspaceId
+    try {
+      await requirePermission(user.id, 'products', workspace_id);
+    } catch (error) {
+      console.error('[POST /api/products] Permission denied:', error);
+      return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
+    }
 
     if (!workspace_id) {
       console.error('[POST /api/products] Missing workspace_id');
@@ -117,7 +121,8 @@ export async function POST(request: NextRequest) {
           image_url,
           category_id: category_id || null,
           user_id: user.id, // Track creator
-          workspace_id: workspace_id // Scope to workspace
+          workspace_id: workspace_id, // Scope to workspace
+          min_stock_alert: min_stock_alert || null
         }
       ])
       .select()

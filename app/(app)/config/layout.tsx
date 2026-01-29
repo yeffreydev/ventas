@@ -2,7 +2,8 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { HiCog, HiChat, HiUsers, HiTag, HiTemplate, HiClipboardList } from "react-icons/hi";
+import { HiCog, HiChat, HiUsers, HiTag, HiTemplate, HiClipboardList, HiOfficeBuilding } from "react-icons/hi";
+import { Package } from "lucide-react";
 
 export default function ConfigLayout({
   children,
@@ -12,6 +13,12 @@ export default function ConfigLayout({
   const pathname = usePathname();
 
   const configTabs = [
+    {
+      name: "Negocio",
+      href: "/config/business",
+      icon: HiOfficeBuilding,
+      description: "Edita perfil y logo del negocio",
+    },
     {
       name: "Canales",
       href: "/config/channels",
@@ -35,6 +42,12 @@ export default function ConfigLayout({
       href: "/config/templates",
       icon: HiTemplate,
       description: "Crea respuestas rápidas",
+    },
+    {
+      name: "Stock",
+      href: "/config/stock",
+      icon: Package,
+      description: "Configura alertas y reglas de inventario",
     },
     {
       name: "Campos de Pedidos",

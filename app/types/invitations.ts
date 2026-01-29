@@ -27,7 +27,8 @@ export interface PendingInvitation extends AgentInvitation {
   inviter_name: string | null;
   role_name: string;
   role_slug: string;
-  is_expired: boolean;
+  rejected_by?: string[];
+  workspace_name?: string;
 }
 
 export interface CreateInvitationRequest {

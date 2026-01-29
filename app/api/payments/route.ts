@@ -2,18 +2,8 @@ import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { CreatePaymentInput, PaymentFilters } from '@/app/types/payments';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
-async function checkWorkspaceAccess(supabase: any, workspaceId: string, userId: string): Promise<boolean> {
-  if (!workspaceId) return false;
-  const { data, error } = await supabase
-    .from('workspace_members')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('user_id', userId)
-    .single();
-
-  return !error && !!data;
-}
 
 // GET /api/payments - List payments with filtering and pagination
 export async function GET(request: NextRequest) {

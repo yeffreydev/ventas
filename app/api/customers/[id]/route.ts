@@ -1,6 +1,7 @@
 import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
 export async function GET(
   request: NextRequest,
@@ -15,12 +16,9 @@ export async function GET(
     }
 
     const { id } = await params;
-    const { searchParams } = new URL(request.url);
-    const workspaceId = searchParams.get('workspace_id');
 
-    // For backwards compatibility, if no workspace_id, try user_id based query
-    // But ideally all calls should include workspace_id
-    const query = supabase
+    // RLS will filter based on workspace access
+    const { data: customer, error } = await supabase
       .from('customers')
       .select(`
         *,
@@ -33,18 +31,17 @@ export async function GET(
           )
         )
       `)
-      .eq('id', id);
+      .eq('id', id)
+      .single();
 
-    if (workspaceId) {
-      query.eq('workspace_id', workspaceId);
-    } else {
-      query.eq('user_id', user.id);
+    if (error || !customer) {
+      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
 
-    const { data: customer, error } = await query.single();
-
-    if (error) {
-      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    // Verify workspace access
+    const hasAccess = await checkWorkspaceAccess(supabase, customer.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
     }
 
     return NextResponse.json(customer);
@@ -66,6 +63,24 @@ export async function PUT(
     }
 
     const { id } = await params;
+
+    // First check if customer exists and get workspace_id
+    const { data: existingCustomer, error: fetchError } = await supabase
+      .from('customers')
+      .select('id, workspace_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingCustomer) {
+      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    }
+
+    // Verify workspace access
+    const hasAccess = await checkWorkspaceAccess(supabase, existingCustomer.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
+    }
+
     const body = await request.json();
     const {
       name,
@@ -78,8 +93,7 @@ export async function PUT(
       district,
       address,
       stage,
-      tags,
-      workspace_id
+      tags
     } = body;
 
     // Build update object with only provided fields
@@ -98,19 +112,11 @@ export async function PUT(
     if (address !== undefined) updateData.address = address;
     if (stage !== undefined) updateData.stage = stage;
 
-    // Update customer - use workspace_id if provided, otherwise user_id
-    const updateQuery = supabase
+    // Update customer
+    const { data: customer, error: updateError } = await supabase
       .from('customers')
       .update(updateData)
-      .eq('id', id);
-
-    if (workspace_id) {
-      updateQuery.eq('workspace_id', workspace_id);
-    } else {
-      updateQuery.eq('user_id', user.id);
-    }
-
-    const { data: customer, error: updateError } = await updateQuery
+      .eq('id', id)
       .select()
       .single();
 
@@ -158,21 +164,28 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    const { searchParams } = new URL(request.url);
-    const workspaceId = searchParams.get('workspace_id');
 
-    const deleteQuery = supabase
+    // First check if customer exists and get workspace_id
+    const { data: existingCustomer, error: fetchError } = await supabase
+      .from('customers')
+      .select('id, workspace_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingCustomer) {
+      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    }
+
+    // Verify workspace access
+    const hasAccess = await checkWorkspaceAccess(supabase, existingCustomer.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
+    }
+
+    const { error } = await supabase
       .from('customers')
       .delete()
       .eq('id', id);
-
-    if (workspaceId) {
-      deleteQuery.eq('workspace_id', workspaceId);
-    } else {
-      deleteQuery.eq('user_id', user.id);
-    }
-
-    const { error } = await deleteQuery;
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

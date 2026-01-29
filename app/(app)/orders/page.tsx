@@ -23,6 +23,8 @@ import OrderForm from "./components/OrderForm";
 import EditOrderModal from "./components/EditOrderModal";
 import CustomFieldsModal from "./components/CustomFieldsModal";
 import { useWorkspace } from "@/app/providers/WorkspaceProvider";
+import { createClient } from "@/app/utils/supabase/client";
+import DeleteOrderModal from "./components/DeleteOrderModal";
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -38,6 +40,8 @@ export default function OrdersPage() {
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingOrder, setEditingOrder] = useState<OrderWithDetails | null>(null);
+  // State for delete confirmation
+  const [orderToDelete, setOrderToDelete] = useState<any>(null);
   const [showCustomFieldsModal, setShowCustomFieldsModal] = useState(false);
   const [viewingCustomFields, setViewingCustomFields] = useState<Record<string, any> | null>(null);
   const [orderStats, setOrderStats] = useState({
@@ -47,17 +51,48 @@ export default function OrdersPage() {
     completed_orders: 0
   });
 
+  /* State for members list */
+  const [members, setMembers] = useState<any[]>([]);
+  const [agentFilter, setAgentFilter] = useState<string>("");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
   useEffect(() => {
+    // Get current user
+    const fetchUser = async () => {
+      const { data: { user } } = await createClient().auth.getUser();
+      if (user) setCurrentUserId(user.id);
+    };
+    fetchUser();
+
     if (currentWorkspace) {
+      // Set default date to today
+      const today = new Date().toISOString().split('T')[0];
+      setDateFrom(today);
+      setDateTo(today);
+
       fetchCustomers();
+      fetchMembers();
     }
   }, [currentWorkspace]);
 
   useEffect(() => {
-    if (currentWorkspace) {
+    if (currentWorkspace && dateFrom && dateTo) {
       fetchOrders();
     }
-  }, [currentWorkspace, statusFilter, customerFilter, dateFrom, dateTo]);
+  }, [currentWorkspace, statusFilter, customerFilter, agentFilter, dateFrom, dateTo]);
+
+  const fetchMembers = async () => {
+    if (!currentWorkspace) return;
+    try {
+      const response = await fetch(`/api/workspaces/${currentWorkspace.id}/members`);
+      if (response.ok) {
+        const data = await response.json();
+        setMembers(data);
+      }
+    } catch (error) {
+      console.error('Error fetching members:', error);
+    }
+  };
 
   const fetchCustomers = async () => {
     if (!currentWorkspace) return;
@@ -86,6 +121,9 @@ export default function OrdersPage() {
       }
       if (customerFilter) {
         params.append('customer_id', customerFilter);
+      }
+      if (agentFilter) {
+        params.append('agent_id', agentFilter);
       }
       if (dateFrom) {
         params.append('date_from', dateFrom);
@@ -124,10 +162,33 @@ export default function OrdersPage() {
     setOrderStats(stats);
   };
 
+  const handleConfirmDelete = async () => {
+    if (!orderToDelete) return;
+
+    try {
+      const response = await fetch(`/api/orders/${orderToDelete.id}`, {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        fetchOrders();
+        setOrderToDelete(null);
+      } else {
+        const error = await response.json();
+        console.error('Error deleting order:', error);
+        alert('Error al eliminar el pedido: ' + (error.error || 'Error desconocido'));
+      }
+    } catch (error) {
+      console.error('Error deleting order:', error);
+      alert('Error al eliminar el pedido');
+    }
+  };
+
   const handleSearch = () => {
     fetchOrders();
   };
 
+  // ... (statsDisplay and getStatusBadge remain unchanged)
   const statsDisplay = [
     {
       title: "Total Pedidos",
@@ -286,6 +347,25 @@ export default function OrdersPage() {
               </select>
             </div>
 
+            {/* Agent Filter */}
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-2">
+                Agente
+              </label>
+              <select
+                value={agentFilter}
+                onChange={(e) => setAgentFilter(e.target.value)}
+                className="w-full px-3 py-2.5 bg-input-bg border border-input-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+              >
+                <option value="">Todos</option>
+                {members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name} ({member.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Date From */}
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-2">
@@ -322,14 +402,17 @@ export default function OrdersPage() {
                 Buscar
               </button>
               
-              {(statusFilter !== 'all' || customerFilter || dateFrom || dateTo || searchTerm) && (
+              {(statusFilter !== 'all' || customerFilter || agentFilter || dateFrom !== new Date().toISOString().split('T')[0] || dateTo !== new Date().toISOString().split('T')[0] || searchTerm) && (
                 <button
                   onClick={() => {
                     setSearchTerm('');
                     setStatusFilter('all');
                     setCustomerFilter('');
-                    setDateFrom('');
-                    setDateTo('');
+                    setAgentFilter('');
+                    // Reset to today
+                    const today = new Date().toISOString().split('T')[0];
+                    setDateFrom(today);
+                    setDateTo(today);
                   }}
                   className="px-4 py-2.5 bg-background hover:bg-hover-bg border border-current/20 rounded-lg text-sm font-medium text-text-secondary hover:text-foreground transition-colors flex items-center justify-center gap-2"
                   title="Limpiar filtros"
@@ -342,6 +425,8 @@ export default function OrdersPage() {
           </div>
         </div>
 
+        {/* ... (Actions Bar remains unchanged) */}
+        
         {/* Actions Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           <button
@@ -386,6 +471,9 @@ export default function OrdersPage() {
                         Cliente
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                        Agente
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">
                         Fecha
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-text-secondary uppercase tracking-wider">
@@ -411,6 +499,11 @@ export default function OrdersPage() {
                         <td className="px-4 py-3 whitespace-nowrap">
                           <span className="text-sm text-foreground">
                             {order.customer_name || 'Sin cliente'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-sm text-text-secondary">
+                            {order.user_id === currentUserId ? 'Tú' : (order.agent_name || 'Usuario')}
                           </span>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -453,26 +546,15 @@ export default function OrdersPage() {
                             >
                               <Edit className="w-4 h-4 text-text-secondary" />
                             </button>
-                            <button 
-                              onClick={async () => {
-                                if (confirm('¿Estás seguro de que deseas cancelar este pedido?')) {
-                                  try {
-                                    const response = await fetch(`/api/orders/${order.id}`, {
-                                      method: 'DELETE',
-                                    });
-                                    if (response.ok) {
-                                      fetchOrders();
-                                    }
-                                  } catch (error) {
-                                    console.error('Error cancelling order:', error);
-                                  }
-                                }
-                              }}
-                              className="p-1.5 hover:bg-hover-bg rounded transition-colors" 
-                              title="Cancelar"
-                            >
-                              <Trash2 className="w-4 h-4 text-red-500" />
-                            </button>
+                            {currentWorkspace?.owner_id === currentUserId && (
+                              <button 
+                                onClick={() => setOrderToDelete(order)}
+                                className="p-1.5 hover:bg-hover-bg rounded transition-colors" 
+                                title="Eliminar"
+                              >
+                                <Trash2 className="w-4 h-4 text-red-500" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -543,26 +625,17 @@ export default function OrdersPage() {
                       <Edit className="w-4 h-4" />
                       Editar
                     </button>
+                    {currentWorkspace?.owner_id === currentUserId && (
                     <button
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm('¿Estás seguro de que deseas cancelar este pedido?')) {
-                          try {
-                            const response = await fetch(`/api/orders/${order.id}`, {
-                              method: 'DELETE',
-                            });
-                            if (response.ok) {
-                              fetchOrders();
-                            }
-                          } catch (error) {
-                            console.error('Error cancelling order:', error);
-                          }
-                        }
+                        setOrderToDelete(order);
                       }}
                       className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg transition-colors flex items-center justify-center"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -652,6 +725,14 @@ export default function OrdersPage() {
             setShowCustomFieldsModal(false);
             setViewingCustomFields(null);
           }}
+        />
+      )}
+      
+      {orderToDelete && (
+        <DeleteOrderModal
+          order={orderToDelete}
+          onClose={() => setOrderToDelete(null)}
+          onConfirm={handleConfirmDelete}
         />
       )}
     </div>

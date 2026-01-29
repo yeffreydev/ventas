@@ -8,10 +8,9 @@ import { useRouter } from "next/navigation";
 interface CreateWorkspaceProps {
   onSuccess?: () => void;
   redirectTo?: string;
-  isFirstWorkspace?: boolean;
 }
 
-export default function CreateWorkspace({ onSuccess, redirectTo, isFirstWorkspace = false }: CreateWorkspaceProps) {
+export default function CreateWorkspace({ onSuccess, redirectTo }: CreateWorkspaceProps) {
   const { createWorkspace, switchWorkspace } = useWorkspace();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -42,7 +41,7 @@ export default function CreateWorkspace({ onSuccess, redirectTo, isFirstWorkspac
         return;
       }
 
-      // Automatically switch to the new workspace
+      // Automatically switch to the new workspace and set as default
       if (newWorkspace.id) {
         await switchWorkspace(newWorkspace.id);
         
@@ -53,9 +52,6 @@ export default function CreateWorkspace({ onSuccess, redirectTo, isFirstWorkspac
         if (redirectTo) {
             router.push(redirectTo);
         } else {
-             // If no explicit redirect, force a refresh/navigation to dashboard to ensure context is clean
-             // or let the parent handle it. 
-             // Common behavior: go to dashboard.
              router.push('/dashboard');
         }
       }
@@ -68,51 +64,47 @@ export default function CreateWorkspace({ onSuccess, redirectTo, isFirstWorkspac
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-4 animate-fadeIn w-full max-w-md mx-auto">
-        <div className="text-center w-full">
-            <div className="mx-auto h-20 w-20 bg-gradient-to-br from-primary/20 to-primary/5 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-primary/5 ring-1 ring-primary/10">
-                <HiOfficeBuilding className="h-10 w-10 text-primary" />
+    <div className="flex flex-col items-center justify-center p-4 w-full max-w-md mx-auto">
+        <div className="text-center w-full mb-8">
+            <div className="mx-auto h-16 w-16 bg-primary/10 rounded-xl flex items-center justify-center mb-4">
+                <HiOfficeBuilding className="h-8 w-8 text-primary" />
             </div>
-          <h2 className="text-3xl font-bold tracking-tight text-foreground">
-            {isFirstWorkspace ? "Bienvenido a CRM-IA" : "Crear Nuevo Negocio"}
+          <h2 className="text-2xl font-bold text-foreground">
+            Crear Nuevo Negocio
           </h2>
-          <p className="mt-3 text-base text-text-secondary max-w-sm mx-auto">
-            {isFirstWorkspace 
-                ? "Para comenzar, crea tu primer espacio de trabajo."
-                : "Expande tus horizontes creando un nuevo espacio para tu siguiente proyecto."}
+          <p className="mt-2 text-text-secondary">
+             Solo necesitamos el nombre y una breve descripción
           </p>
         </div>
         
-        <form className="mt-10 w-full space-y-6" onSubmit={handleSubmit}>
-            <div className="space-y-5">
-                <div className="group">
-                  <label htmlFor="name" className="block text-sm font-semibold text-foreground mb-2 ml-1">
-                    Nombre del Negocio
+        <form className="w-full space-y-6" onSubmit={handleSubmit}>
+            <div className="space-y-4">
+                <div>
+                  <label htmlFor="name" className="block text-sm font-medium text-foreground mb-1">
+                    Nombre del Negocio *
                   </label>
-                  <div className="relative">
-                      <input
-                        id="name"
-                        name="name"
-                        type="text"
-                        required
-                        className="appearance-none block w-full px-4 py-3 rounded-xl border border-border bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 shadow-sm"
-                        placeholder="Ej. Acme Corp"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                      />
-                  </div>
+                  <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    required
+                    className="w-full px-4 py-3 rounded-lg border border-border bg-input-bg text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                    placeholder="Ej. Mi Empresa"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
                 </div>
                 
                 <div>
-                  <label htmlFor="description" className="block text-sm font-semibold text-foreground mb-2 ml-1">
-                    Descripción <span className="text-text-tertiary font-normal">(Opcional)</span>
+                  <label htmlFor="description" className="block text-sm font-medium text-foreground mb-1">
+                    Descripción (Opcional)
                   </label>
                   <textarea
                     id="description"
                     name="description"
                     rows={3}
-                    className="appearance-none block w-full px-4 py-3 rounded-xl border border-border bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 resize-none shadow-sm"
-                    placeholder="¿A qué se dedica tu negocio?"
+                    className="w-full px-4 py-3 rounded-lg border border-border bg-input-bg text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+                    placeholder="Breve descripción..."
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                   />
@@ -120,22 +112,8 @@ export default function CreateWorkspace({ onSuccess, redirectTo, isFirstWorkspac
             </div>
 
           {error && (
-            <div className="rounded-lg bg-red-50 dark:bg-red-900/10 p-4 border border-red-100 dark:border-red-900/20 animate-fadeIn">
-              <div className="flex">
-                <div className="flex-shrink-0">
-                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium text-red-800 dark:text-red-200">
-                    Ocurrió un error
-                  </h3>
-                  <div className="mt-2 text-sm text-red-700 dark:text-red-300">
-                    <p>{error}</p>
-                  </div>
-                </div>
-              </div>
+            <div className="text-red-600 text-sm text-center bg-red-50 p-3 rounded-lg">
+              {error}
             </div>
           )}
 
@@ -143,19 +121,9 @@ export default function CreateWorkspace({ onSuccess, redirectTo, isFirstWorkspac
             <button
               type="submit"
               disabled={isSubmitting || !name}
-              className="group relative w-full flex justify-center py-3.5 px-4 border border-transparent text-sm font-semibold rounded-xl text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all duration-200 hover:-translate-y-0.5"
+              className="w-full flex justify-center py-3 px-4 rounded-lg text-white bg-primary hover:bg-primary/90 font-medium transition-colors disabled:opacity-50"
             >
-              {isSubmitting ? (
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-              ) : (
-                <span className="absolute left-0 inset-y-0 flex items-center pl-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    {/* Icon can go here */}
-                </span>
-              )}
-              {isSubmitting ? 'Creando espacio...' : 'Crear Negocio'}
+              {isSubmitting ? 'Creando...' : 'Crear Negocio'}
             </button>
           </div>
         </form>

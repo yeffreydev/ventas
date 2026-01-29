@@ -1,6 +1,7 @@
 import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
 export async function GET(
   request: NextRequest,
@@ -15,6 +16,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // RLS will filter based on workspace access
     const { data: product, error } = await supabase
       .from('products')
       .select(`
@@ -23,11 +25,16 @@ export async function GET(
         product_categories(*)
       `)
       .eq('id', id)
-      .eq('user_id', user.id)
       .single();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 404 });
+    if (error || !product) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+    }
+
+    // Verify workspace access
+    const hasAccess = await checkWorkspaceAccess(supabase, product.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
     }
 
     return NextResponse.json(product);
@@ -49,6 +56,23 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // First check if product exists and get workspace_id
+    const { data: existingProduct, error: fetchError } = await supabase
+      .from('products')
+      .select('id, workspace_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingProduct) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+    }
+
+    // Verify workspace access
+    const hasAccess = await checkWorkspaceAccess(supabase, existingProduct.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
+    }
+
     const body = await request.json();
     const {
       name,
@@ -58,7 +82,8 @@ export async function PUT(
       stock,
       image_url,
       category_id,
-      variants
+      variants,
+      min_stock_alert
     } = body;
 
     // Update product
@@ -72,10 +97,10 @@ export async function PUT(
         stock,
         image_url,
         category_id: category_id || null,
+        min_stock_alert: min_stock_alert !== undefined ? min_stock_alert : undefined,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
-      .eq('user_id', user.id)
       .select()
       .single();
 
@@ -85,11 +110,6 @@ export async function PUT(
 
     // Handle variants
     if (variants) {
-      // Delete existing variants not in the new list (if any logic requires it, or just update/insert)
-      // For simplicity, we might delete all and recreate, or update existing ones.
-      // Let's try a smarter approach: update existing, insert new, delete removed.
-      
-      // 1. Get existing variants
       const { data: existingVariants } = await supabase
         .from('product_variants')
         .select('id')
@@ -98,8 +118,7 @@ export async function PUT(
       const existingIds = existingVariants?.map(v => v.id) || [];
       const newVariantIds = variants.filter((v: any) => v.id).map((v: any) => v.id);
       
-      // 2. Delete removed variants
-      const idsToDelete = existingIds.filter(id => !newVariantIds.includes(id));
+      const idsToDelete = existingIds.filter(existingId => !newVariantIds.includes(existingId));
       if (idsToDelete.length > 0) {
         await supabase
           .from('product_variants')
@@ -107,19 +126,7 @@ export async function PUT(
           .in('id', idsToDelete);
       }
 
-      // 3. Upsert variants
-      const variantsToUpsert = variants.map((variant: any) => ({
-        id: variant.id, // If id exists, it updates; if not (and we remove it from object for insert), it inserts.
-                        // Actually upsert needs ID to update. New ones won't have ID.
-        product_id: id,
-        name: variant.name,
-        price: variant.price || product.price,
-        stock: variant.stock || 0,
-        sku: variant.sku
-      }));
-
-      // Separate insert and update for clarity or use upsert if ID is handled correctly
-      for (const variant of variantsToUpsert) {
+      for (const variant of variants) {
         if (variant.id) {
            await supabase
             .from('product_variants')
@@ -137,8 +144,8 @@ export async function PUT(
             .insert({
               product_id: id,
               name: variant.name,
-              price: variant.price,
-              stock: variant.stock,
+              price: variant.price || product.price,
+              stock: variant.stock || 0,
               sku: variant.sku
             });
         }
@@ -164,11 +171,27 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // First check if product exists and get workspace_id
+    const { data: existingProduct, error: fetchError } = await supabase
+      .from('products')
+      .select('id, workspace_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingProduct) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+    }
+
+    // Verify workspace access
+    const hasAccess = await checkWorkspaceAccess(supabase, existingProduct.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
+    }
+
     const { error } = await supabase
       .from('products')
       .delete()
-      .eq('id', id)
-      .eq('user_id', user.id);
+      .eq('id', id);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

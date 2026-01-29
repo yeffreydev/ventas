@@ -20,6 +20,7 @@ import {
 import { generateOrderPDF } from "@/app/utils/pdfGenerator";
 import { OrderWithDetails, OrderStatus } from "@/app/types/orders";
 import { Skeleton } from "@/app/components/ui/Skeleton";
+import { useWorkspace } from "@/app/providers/WorkspaceProvider";
 
 interface OrderDetailPageProps {
   params: Promise<{
@@ -34,6 +35,7 @@ export default function OrderDetailPage({ params }: OrderDetailPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
+  const { currentWorkspace } = useWorkspace();
 
   useEffect(() => {
     const getParams = async () => {
@@ -220,7 +222,7 @@ export default function OrderDetailPage({ params }: OrderDetailPageProps) {
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
             <button
-              onClick={() => generateOrderPDF(order)}
+              onClick={() => generateOrderPDF(order, currentWorkspace?.image_url, currentWorkspace?.description)}
               className="px-4 py-2 bg-background hover:bg-hover-bg border border-current/20 text-foreground rounded-lg transition-colors flex items-center justify-center gap-2"
             >
               <Download className="w-4 h-4" />

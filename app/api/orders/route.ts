@@ -2,18 +2,9 @@ import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { CreateOrderInput, OrderFilters } from '@/app/types/orders';
+import { requirePermission } from '@/app/lib/permissions';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
-async function checkWorkspaceAccess(supabase: any, workspaceId: string, userId: string): Promise<boolean> {
-  if (!workspaceId) return false;
-  const { data, error } = await supabase
-    .from('workspace_members')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('user_id', userId)
-    .single();
-
-  return !error && !!data;
-}
 
 // GET /api/orders - List orders with filtering and pagination
 export async function GET(request: NextRequest) {
@@ -31,6 +22,7 @@ export async function GET(request: NextRequest) {
     const pageSize = parseInt(searchParams.get('page_size') || '10');
     const status = searchParams.get('status') || 'all';
     const customerId = searchParams.get('customer_id');
+    const agentId = searchParams.get('agent_id');
     const dateFrom = searchParams.get('date_from');
     const dateTo = searchParams.get('date_to');
     const search = searchParams.get('search');
@@ -38,6 +30,14 @@ export async function GET(request: NextRequest) {
 
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace ID required' }, { status: 400 });
+    }
+
+    // Check permission with workspaceId
+    try {
+      await requirePermission(user.id, 'orders', workspaceId);
+    } catch (error) {
+      console.error('[GET /api/orders] Permission denied:', error);
+      return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
     }
 
     const hasAccess = await checkWorkspaceAccess(supabase, workspaceId, user.id);
@@ -67,12 +67,18 @@ export async function GET(request: NextRequest) {
       query = query.eq('customer_id', customerId);
     }
 
+    if (agentId) {
+      query = query.eq('user_id', agentId);
+    }
+
     if (dateFrom) {
       query = query.gte('order_date', dateFrom);
     }
 
     if (dateTo) {
-      query = query.lte('order_date', dateTo);
+      // Add time to include the end date fully
+      const dateToWithTime = `${dateTo}T23:59:59.999Z`;
+      query = query.lte('order_date', dateToWithTime);
     }
 
     if (search) {
@@ -92,17 +98,40 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Format response
+
+    // Fetch agent names to allow dynamic updates
+    const userIds = orders?.map(o => o.user_id).filter(Boolean) || [];
+    const uniqueUserIds = Array.from(new Set(userIds));
+    
+    let agentMap: Record<string, string> = {};
+    
+    if (uniqueUserIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('agent_profiles')
+        .select('user_id, display_name')
+        .in('user_id', uniqueUserIds);
+        
+      if (profiles) {
+        profiles.forEach(p => {
+          if (p.display_name) {
+            agentMap[p.user_id] = p.display_name;
+          }
+        });
+      }
+    }
+
+    // Format response - prioritize live profile name, then stored snapshot, then fallback
     const formattedOrders = orders?.map(order => ({
       ...order,
       customer_name: order.customers?.name || null,
       customer_email: order.customers?.email || null,
+      agent_name: agentMap[order.user_id] || order.created_by_name || 'Usuario'
     })) || [];
 
     return NextResponse.json({
       orders: formattedOrders,
       total: count || 0,
-      page,
+       page,
       page_size: pageSize,
       total_pages: Math.ceil((count || 0) / pageSize)
     });
@@ -142,6 +171,14 @@ export async function POST(request: NextRequest) {
        return NextResponse.json({ error: 'Workspace ID required' }, { status: 400 });
     }
 
+    // Check permission with workspaceId
+    try {
+      await requirePermission(user.id, 'orders', workspace_id);
+    } catch (error) {
+      console.error('[POST /api/orders] Permission denied:', error);
+      return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
+    }
+
     const hasAccess = await checkWorkspaceAccess(supabase, workspace_id, user.id);
     if (!hasAccess) {
          return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
@@ -154,6 +191,15 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Fetch workspace settings
+    const { data: workspaceSettings, error: settingsError } = await supabase
+      .from('workspaces')
+      .select('allow_orders_without_stock')
+      .eq('id', workspace_id)
+      .single();
+
+    const allowOrdersWithoutStock = workspaceSettings?.allow_orders_without_stock || false;
 
     // Validate and fetch product details for each item
     const itemsWithDetails = await Promise.all(
@@ -170,8 +216,8 @@ export async function POST(request: NextRequest) {
           throw new Error(`Product not found: ${item.product_id}`);
         }
 
-        // Check stock availability
-        if (product.stock < item.quantity) {
+        // Check stock availability (unless allowed to ignore)
+        if (!allowOrdersWithoutStock && product.stock < item.quantity) {
           throw new Error(`Insufficient stock for product: ${product.name}`);
         }
 
@@ -189,7 +235,7 @@ export async function POST(request: NextRequest) {
             throw new Error(`Product variant not found: ${item.product_variant_id}`);
           }
 
-          if (variant.stock < item.quantity) {
+          if (!allowOrdersWithoutStock && variant.stock < item.quantity) {
             throw new Error(`Insufficient stock for variant: ${variant.name}`);
           }
 
@@ -257,6 +303,12 @@ export async function POST(request: NextRequest) {
     const orderDiscountAmount = itemsWithDetails.reduce((sum, item) => sum + item.discount_amount, 0);
     const orderTotalAmount = itemsWithDetails.reduce((sum, item) => sum + item.total, 0);
 
+    // Get the agent name from user metadata
+    const agentName = user.user_metadata?.full_name || 
+                      user.user_metadata?.name || 
+                      user.email?.split('@')[0] || 
+                      'Usuario';
+
     // Create order
     const { data: order, error: orderError } = await supabase
       .from('orders')
@@ -265,6 +317,7 @@ export async function POST(request: NextRequest) {
           order_number: orderNumberData,
           customer_id: customer_id || null,
           user_id: user.id,
+          created_by_name: agentName, // Save agent name directly
           workspace_id: workspace_id, // Scope to workspace
           status,
           subtotal: orderSubtotal,

@@ -4,18 +4,8 @@ import { cookies } from 'next/headers';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getGeminiFunctionDeclarations } from '@/app/lib/mcp-tools';
 import { executeMCPTool } from '@/app/lib/mcp-handler';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
-async function checkWorkspaceAccess(supabase: any, workspaceId: string, userId: string): Promise<boolean> {
-  if (!workspaceId) return false;
-  const { data, error } = await supabase
-    .from('workspace_members')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('user_id', userId)
-    .single();
-
-  return !error && !!data;
-}
 
 export async function POST(request: NextRequest) {
   try {

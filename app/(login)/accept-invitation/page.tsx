@@ -46,25 +46,28 @@ function AcceptInvitationContent() {
       );
 
       if (validError || !isValid) {
-        setError("La invitación no es válida o ha expirado");
+        setError("La invitación no es válida o ya fue procesada");
         setIsLoading(false);
         return;
       }
 
-      // Get invitation details
-      const { data: invitations, error: invError } = await supabase
-        .from("pending_invitations")
-        .select("*")
-        .eq("token", token)
-        .single();
+      // Get invitation details using the secure RPC (works for unauthenticated users)
+      const { data: invitationDetails, error: invError } = await supabase.rpc(
+        "get_invitation_details",
+        { token_input: token }
+      );
 
-      if (invError || !invitations) {
+      if (invError || !invitationDetails) {
+        console.error("Error fetching invitation details:", invError);
         setError("No se pudo cargar la invitación");
         setIsLoading(false);
         return;
       }
 
-      setInvitation(invitations);
+      setInvitation({
+        ...invitationDetails,
+        inviter_email: (invitationDetails as any).invited_by_email
+      } as any);
     } catch (err) {
       console.error("Error checking invitation:", err);
       setError("Error al verificar la invitación");
@@ -191,7 +194,7 @@ function AcceptInvitationContent() {
               Invitación No Válida
             </h2>
             <p className="text-text-secondary mb-6">
-              {error || "La invitación no existe o ha expirado"}
+              {error || "La invitación no existe o ya fue procesada"}
             </p>
             <Link
               href="/login"
@@ -373,7 +376,7 @@ function AcceptInvitationContent() {
 
             {!user && (
               <Link
-                href={`/login?redirect=/accept-invitation?token=${token}`}
+                href={`/login?invitation=${token}`}
                 className="block w-full py-3 px-4 border border-current/20 text-center text-text-secondary rounded-lg hover:bg-hover-bg transition-colors font-medium"
               >
                 Ya tengo cuenta

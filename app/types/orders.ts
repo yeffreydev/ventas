@@ -70,6 +70,7 @@ export interface OrderWithItems extends Order {
 export interface OrderWithCustomer extends Order {
   customer_name?: string;
   customer_email?: string;
+  agent_name?: string;
 }
 
 // Order with full details (items and customer)

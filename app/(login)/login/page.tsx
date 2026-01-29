@@ -1,17 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { FcGoogle } from "react-icons/fc";
-import { AiFillApple } from "react-icons/ai";
+import { useState, Suspense } from "react";
 import { HiEye, HiEyeOff } from "react-icons/hi";
 import { FiArrowRight } from "react-icons/fi";
 import { createClient } from "../../utils/supabase/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { useThemeContext } from "../../providers/ThemeProvider";
 
-export default function LoginPage() {
+function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -19,6 +17,8 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const invitationToken = searchParams.get("invitation");
   const supabase = createClient();
   const { theme } = useThemeContext();
 
@@ -35,13 +35,38 @@ export default function LoginPage() {
 
       if (error) {
         setError(error.message);
-      } else {
+      } else if (data.user) {
         // Guardar datos del usuario en localStorage
-        if (data.user) {
-          localStorage.setItem('user_data', JSON.stringify(data.user));
+        localStorage.setItem('user_data', JSON.stringify(data.user));
+        
+        // Priority Redirect: Invitation
+        if (invitationToken) {
+          router.push(`/accept-invitation?token=${invitationToken}`);
+          return;
         }
-        // Redirect to dashboard
-        router.push("/dashboard");
+        
+        // Smart redirection logic
+        // 1. Check if user has workspaces
+        const { data: workspaces } = await supabase
+          .from('user_accessible_workspaces')
+          .select('*')
+          .eq('user_id', data.user.id);
+
+        // 2. Get default workspace from user metadata
+        const defaultWorkspaceId = data.user.user_metadata?.default_workspace_id;
+
+        // 3. Redirect based on workspace status
+        if (!workspaces || workspaces.length === 0) {
+          // No workspaces -> go to onboarding
+          router.push("/onboarding");
+        } else if (defaultWorkspaceId && workspaces.find((w: any) => w.id === defaultWorkspaceId)) {
+          // Has default workspace -> go directly to dashboard
+          // WorkspaceProvider will auto-select the default workspace
+          router.push("/dashboard");
+        } else {
+          // Has workspaces but no default -> show workspace selector
+          router.push("/workspaces");
+        }
       }
     } catch (err) {
       setError("Ocurrió un error durante el inicio de sesión");
@@ -201,23 +226,23 @@ export default function LoginPage() {
             </div>
 
             {/* OAuth Buttons */}
-            <div className="space-y-3">
-              <button
-                type="button"
-                className="w-full inline-flex items-center justify-center py-3 px-4 border border-current/20 rounded-lg shadow-sm bg-background text-sm font-medium text-foreground hover:bg-hover-bg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all"
-              >
-                <FcGoogle className="w-5 h-5 mr-3" />
-                Iniciar sesión con Google
-              </button>
+            {/*  <div className="space-y-3">
+                <button
+                  type="button"
+                  className="w-full inline-flex items-center justify-center py-3 px-4 border border-current/20 rounded-lg shadow-sm bg-background text-sm font-medium text-foreground hover:bg-hover-bg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all"
+                >
+                  <FcGoogle className="w-5 h-5 mr-3" />
+                  Iniciar sesión con Google
+                </button>
 
-              <button
-                type="button"
-                className="w-full inline-flex items-center justify-center py-3 px-4 border border-current/20 rounded-lg shadow-sm bg-background text-sm font-medium text-foreground hover:bg-hover-bg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all"
-              >
-                <AiFillApple className="w-5 h-5 mr-3" />
-                Iniciar sesión con Apple
-              </button>
-            </div>
+                <button
+                  type="button"
+                  className="w-full inline-flex items-center justify-center py-3 px-4 border border-current/20 rounded-lg shadow-sm bg-background text-sm font-medium text-foreground hover:bg-hover-bg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all"
+                >
+                  <AiFillApple className="w-5 h-5 mr-3" />
+                  Iniciar sesión con Apple
+                </button>
+              </div>*/}
           </form>
 
         </div>
@@ -241,5 +266,17 @@ export default function LoginPage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }

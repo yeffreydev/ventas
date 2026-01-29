@@ -1,18 +1,97 @@
 'use client';
 
 import { useState } from 'react';
-import { HiBell, HiTrash, HiCheckCircle } from 'react-icons/hi';
+import { useRouter } from 'next/navigation';
+import { HiBell, HiTrash, HiCheckCircle, HiX } from 'react-icons/hi';
 import { useNotifications } from '@/app/providers/NotificationProvider';
 import { formatDistanceToNow } from '@/app/utils/dateUtils';
+import { createClient } from "@/app/utils/supabase/client";
 import type { Notification } from '@/app/types/notifications';
 
 export default function NotificationsPage() {
+  const router = useRouter();
+  const supabase = createClient();
   const { notifications, isLoading, markAsRead, markAllAsRead, deleteNotification } = useNotifications();
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const [processingId, setProcessingId] = useState<string | null>(null);
 
   const filteredNotifications = filter === 'unread' 
     ? notifications.filter((n: Notification) => !n.read)
     : notifications;
+
+  const handleAcceptInvitation = async (notification: Notification) => {
+    const token = notification.metadata?.invitation_token;
+    if (!token) {
+      alert("Error: Token de invitación no encontrado");
+      return;
+    }
+
+    try {
+      setProcessingId(notification.id);
+      const response = await fetch('/api/invitations/accept', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Mark notification as read
+        await markAsRead(notification.id);
+        
+        // Update local storage and redirect
+        if (data.workspace_id) {
+          localStorage.setItem('last_workspace_id', data.workspace_id);
+          // Set as default workspace in Supabase
+          await supabase.auth.updateUser({
+            data: { default_workspace_id: data.workspace_id }
+          });
+        }
+        
+        // Redirect to dashboard
+        window.location.href = "/dashboard"; // Force full reload to update workspace context
+      } else {
+        alert(data.error || "Error al aceptar la invitación");
+      }
+    } catch (error) {
+      console.error("Error accepting invitation:", error);
+      alert("Error inesperado al aceptar la invitación");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleRejectInvitation = async (notification: Notification) => {
+    const token = notification.metadata?.invitation_token;
+    if (!token) return;
+
+    if (!confirm("¿Estás seguro de que deseas rechazar esta invitación?")) return;
+
+    try {
+      setProcessingId(notification.id);
+      const response = await fetch('/api/invitations/reject', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token }),
+      });
+
+      if (response.ok) {
+        // Mark as read and maybe delete?
+        await deleteNotification(notification.id);
+      } else {
+        alert("Error al rechazar la invitación");
+      }
+    } catch (error) {
+      console.error("Error rejecting invitation:", error);
+    } finally {
+      setProcessingId(null);
+    }
+  };
 
   const getNotificationIcon = (type: string) => {
     switch (type) {
@@ -124,6 +203,7 @@ export default function NotificationsPage() {
           filteredNotifications.map((notification: Notification) => {
             const isInvitation = notification.type === 'invitation';
             const workspaceName = notification.metadata?.workspace_name || 'un espacio de trabajo';
+            const isProcessing = processingId === notification.id;
 
             return (
               <div
@@ -157,10 +237,57 @@ export default function NotificationsPage() {
 
                     {/* Special rendering for invitations */}
                     {isInvitation && (
-                      <div className="mb-3 p-3 bg-primary/5 rounded-lg">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-text-tertiary">Espacio:</span>
-                          <span className="font-medium text-foreground">{workspaceName}</span>
+                      <div className="mb-3 p-4 bg-background border border-border rounded-lg">
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-sm">
+                              <span className="text-text-tertiary">Espacio:</span>
+                              <span className="font-bold text-foreground">{workspaceName}</span>
+                            </div>
+                            
+                            {notification.metadata?.role_name && (
+                               <div className="flex items-center gap-2 text-sm">
+                                <span className="text-text-tertiary">Rol:</span>
+                                <span className="font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">{notification.metadata.role_name}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {notification.metadata?.modules && Array.isArray(notification.metadata.modules) && notification.metadata.modules.length > 0 && (
+                             <div className="text-sm">
+                                <span className="text-text-tertiary ml-1">Módulos:</span>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {notification.metadata.modules.map((mod: string, idx: number) => (
+                                    <span key={idx} className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded text-xs border border-blue-100 dark:border-blue-800">
+                                      {mod}
+                                    </span>
+                                  ))}
+                                </div>
+                             </div>
+                          )}
+                          
+                          <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-border">
+                            <button
+                              onClick={() => handleRejectInvitation(notification)}
+                              className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors flex items-center gap-1"
+                              disabled={isProcessing}
+                            >
+                              <HiX className="w-3 h-3" />
+                              Rechazar
+                            </button>
+                            <button
+                              onClick={() => handleAcceptInvitation(notification)}
+                              className="px-3 py-1.5 text-xs font-medium bg-primary text-white hover:bg-primary/90 rounded-md transition-colors flex items-center gap-1"
+                              disabled={isProcessing}
+                            >
+                              {isProcessing ? (
+                                <span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full"></span>
+                              ) : (
+                                <HiCheckCircle className="w-3 h-3" />
+                              )}
+                              Aceptar
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -181,7 +308,7 @@ export default function NotificationsPage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {!notification.read && (
+                    {!notification.read && !isInvitation && (
                       <button
                         onClick={() => markAsRead(notification.id)}
                         className="p-2 hover:bg-hover-bg rounded-lg transition-colors"

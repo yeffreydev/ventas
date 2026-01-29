@@ -38,6 +38,7 @@ interface Product {
   active?: boolean;
   store?: string;
   group?: string;
+  min_stock_alert?: number;
 }
 
 export default function ProductsPage() {
@@ -410,7 +411,31 @@ export default function ProductsPage() {
                             <span className="text-text-secondary">-</span>
                           )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-foreground">{product.stock || 0}</td>
+                        <td className="px-6 py-4">
+                          {(() => {
+                            const stock = product.stock || 0;
+                            const threshold = product.min_stock_alert || 10;
+                            
+                            let badgeClass = 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+                            let icon = '';
+                            
+                            if (stock === 0) {
+                              badgeClass = 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300';
+                              icon = '⚠️ ';
+                            } else if (stock <= threshold) {
+                              badgeClass = 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300';
+                              icon = '⚠️ ';
+                            }
+                            
+                            return (
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-1 text-sm font-semibold rounded ${badgeClass}`}>
+                                  {icon}{stock.toLocaleString()}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td className="px-6 py-4 text-sm font-semibold text-foreground">
                           S/. {product.price.toFixed(2)}
                         </td>

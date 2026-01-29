@@ -1,7 +1,46 @@
 import jsPDF from 'jspdf';
 import { OrderWithDetails } from '@/app/types/orders';
 
-export const generateOrderPDF = (order: OrderWithDetails) => {
+// Helper function to load image and convert to base64
+const loadImageAsBase64 = async (url: string): Promise<string | null> => {
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    
+    // Add cache-busting parameter
+    const imageUrl = url.includes('?') 
+      ? `${url}&pdf=${Date.now()}` 
+      : `${url}?pdf=${Date.now()}`;
+    
+    img.src = imageUrl;
+
+    // Wait for image to load
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = (e) => {
+        console.warn("Failed to load image:", e);
+        reject(new Error('Image load failed'));
+      };
+      setTimeout(() => reject(new Error('Image load timeout')), 5000);
+    });
+
+    // Convert to base64
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) throw new Error('Canvas context not available');
+    
+    ctx.drawImage(img, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch (error) {
+    console.warn('Error converting image to base64:', error);
+    return null;
+  }
+};
+
+export const generateOrderPDF = async (order: OrderWithDetails, workspaceLogoUrl?: string | null, workspaceDescription?: string | null) => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.width;
   const pageHeight = doc.internal.pageSize.height;
@@ -62,12 +101,85 @@ export const generateOrderPDF = (order: OrderWithDetails) => {
     }
   };
 
-  // ==================== HEADER ====================
-  doc.setFontSize(22);
-  doc.setTextColor(...primaryColor);
-  doc.setFont('helvetica', 'bold');
-  const headerText = order.workspace_name || 'Pedido';
-  doc.text(headerText, margin, y);
+  // ==================== HEADER with LOGO ====================
+  // If logo exists, render it
+  let logoLoaded = false;
+  
+  if (workspaceLogoUrl) {
+    try {
+        // Load image as base64
+        const base64Image = await loadImageAsBase64(workspaceLogoUrl);
+        
+        if (base64Image) {
+             // Create temporary image to get dimensions
+             const img = new Image();
+             img.src = base64Image;
+             
+             await new Promise<void>((resolve) => {
+               img.onload = () => resolve();
+               img.onerror = () => resolve();
+               setTimeout(() => resolve(), 1000);
+             });
+             
+             if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+               const logoSize = 25; // 25mm max size
+               const aspectRatio = img.naturalWidth / img.naturalHeight;
+               
+               let logoWidth = logoSize;
+               let logoHeight = logoSize;
+               
+               // Maintain aspect ratio
+               if (aspectRatio > 1) {
+                 // Wide image
+                 logoHeight = logoSize / aspectRatio;
+               } else {
+                 // Tall image
+                 logoWidth = logoSize * aspectRatio;
+               }
+               
+               // Add logo at top left
+               doc.addImage(base64Image, 'PNG', margin, y, logoWidth, logoHeight);
+               
+               // Position company name next to logo
+               const textX = margin + logoWidth + 8;
+               doc.setFontSize(20);
+               doc.setTextColor(...primaryColor);
+               doc.setFont('helvetica', 'bold');
+               const headerText = order.workspace_name || 'Pedido';
+               doc.text(headerText, textX, y + (logoHeight / 2) + 3);
+               
+               // Move Y position down after logo
+               y += Math.max(logoHeight, 12) + 8;
+               logoLoaded = true;
+             }
+        }
+    } catch (e) {
+         console.warn("Error loading workspace logo for PDF:", e);
+    }
+  }
+  
+  // Fallback if logo didn't load - show text header only
+  if (!logoLoaded) {
+      doc.setFontSize(22);
+      doc.setTextColor(...primaryColor);
+      doc.setFont('helvetica', 'bold');
+      const headerText = order.workspace_name || 'Pedido';
+      doc.text(headerText, margin, y + 8);
+      y += 15;
+  }
+  
+  // Workspace description (if available)
+  if (workspaceDescription) {
+      doc.setFontSize(9);
+      doc.setTextColor(...secondaryColor);
+      doc.setFont('helvetica', 'normal');
+      const descLines = doc.splitTextToSize(workspaceDescription, contentWidth * 0.7);
+      descLines.forEach((line: string) => {
+        doc.text(line, margin, y);
+        y += 4;
+      });
+      y += 4;
+  }
   
   // Order number badge
   doc.setFontSize(14);

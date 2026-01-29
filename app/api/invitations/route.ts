@@ -21,16 +21,31 @@ export async function GET(request: Request) {
     const myInvitations = searchParams.get("my_invitations") === "true";
     const workspaceId = searchParams.get("workspace_id");
 
+    if (myInvitations) {
+      // Use RPC function to get invitations excluding rejected ones
+      const { data: invitations, error } = await supabase.rpc(
+        'get_user_pending_invitations',
+        { user_email: user.email, user_uuid: user.id }
+      );
+
+      if (error) {
+        console.error("Error fetching user invitations:", error);
+        return NextResponse.json(
+          { error: "Failed to fetch invitations" },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json(invitations || []);
+    }
+
+    // For workspace invitations (admin view)
     let query = supabase
-      .from(myInvitations ? "agent_invitations" : "pending_invitations")
+      .from("pending_invitations")
       .select("*");
 
-    if (myInvitations) {
-      // Get invitations for current user's email
-      query = query.eq("email", user.email);
-    } else if (workspaceId) {
-        // Filter by workspace if provided (and not viewing personal invitations)
-        query = query.eq("workspace_id", workspaceId);
+    if (workspaceId) {
+      query = query.eq("workspace_id", workspaceId);
     }
 
     if (status) {
@@ -189,6 +204,20 @@ export async function POST(request: Request) {
     const protocol = host.includes('localhost') ? 'http' : 'https';
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
 
+    // Get Role Name for email and notification
+    let roleName = "Agente";
+    if (finalRoleId) {
+      const { data: roleData } = await supabase
+        .from("roles")
+        .select("name")
+        .eq("id", finalRoleId)
+        .single();
+        
+      if (roleData) {
+        roleName = roleData.name;
+      }
+    }
+
     // Send invitation email using Resend
     try {
       console.log("Attempting to send email via Resend...");
@@ -209,16 +238,15 @@ export async function POST(request: Request) {
         const { data, error: resendError } = await resend.emails.send({
           from: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
           to: [cleanEmail], // Wrap in array and use clean email
-          subject: `Has sido invitado a ${businessName} en CRM-IA`,
+          subject: `Has sido invitado a ${businessName} en Botia`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
               <h2>¡Hola!</h2>
-              <p>Has sido invitado por <strong>${user.email}</strong> para unirte a <strong>${businessName}</strong> en CRM-IA.</p>
+              <p>Has sido invitado por <strong>${user.email}</strong> para unirte a <strong>${businessName}</strong> en Botia con el rol de <strong>${roleName}</strong>.</p>
               
               ${message ? `<p><strong>Mensaje:</strong> "${message}"</p>` : ''}
               
               <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <p style="margin: 0;"><strong>Rol:</strong> Agente</p>
                 <p style="margin: 0;"><strong>Especialidades:</strong> ${specialties?.join(', ') || 'General'}</p>
               </div>
 
@@ -227,7 +255,7 @@ export async function POST(request: Request) {
               </a>
               
               <p style="margin-top: 30px; font-size: 12px; color: #666;">
-                Si no esperabas esta invitación, puedes ignorar este correo via: CRM-IA
+                Si no esperabas esta invitación, puedes ignorar este correo via: Botia
               </p>
             </div>
           `
@@ -271,11 +299,13 @@ export async function POST(request: Request) {
           .maybeSingle();
 
         if (!existingNotif) {
+
+
           const notif = await createNotification({
             user_id: targetUserId,
             type: 'invitation',
             title: `Invitación a ${businessName}`,
-            message: `Has sido invitado a unirte a ${businessName} como Agente. Haz clic para ver los detalles y aceptar.`,
+            message: `Has sido invitado a unirte a ${businessName} como ${roleName}. Haz clic para ver los detalles y aceptar.`,
             priority: 'high',
             action_url: `${baseUrl}/accept-invitation?token=${invitation.token}`,
             metadata: {
@@ -283,7 +313,9 @@ export async function POST(request: Request) {
               invitation_token: invitation.token,
               workspace_id: workspace_id,
               workspace_name: businessName,
-              inviter_email: user.email
+              inviter_email: user.email,
+              role_name: roleName,
+              modules: specialties || []
             }
           });
           
@@ -296,7 +328,11 @@ export async function POST(request: Request) {
           console.log("⚠️ Notification already exists for this invitation, skipping.");
         }
       } else {
-        console.log("No matching user ID found via RPC. User not registered yet. Skipping immediate notification.");
+        console.log("No matching user ID found via RPC. User not registered yet.");
+        // We could send an email here inviting them to register if email service is active
+        // But the main email flow above handles the invitation link.
+        // When they register, we need a way to connect them to this invitation.
+        // The /register page should handle the 'invitation' query param.
       }
 
     } catch (notificationError) {

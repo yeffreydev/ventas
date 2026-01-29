@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { CreateOrderInput, CreateOrderItemInput, Address } from "@/app/types/orders";
 import { useWorkspace } from "@/app/providers/WorkspaceProvider";
+import ProductSelectorModal from "./ProductSelectorModal";
 
 interface Product {
   id: string;
@@ -53,6 +54,13 @@ export default function OrderForm({ onClose, onSuccess }: OrderFormProps) {
   const [selectedCustomer, setSelectedCustomer] = useState<string>('');
   const [orderItems, setOrderItems] = useState<CreateOrderItemInput[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Product selector modal state
+  const [productSelectorOpen, setProductSelectorOpen] = useState(false);
+  const [selectingForIndex, setSelectingForIndex] = useState<number | null>(null);
+
+  // Workspace settings
+  const [allowOrdersWithoutStock, setAllowOrdersWithoutStock] = useState(false);
 
   useEffect(() => {
     fetchInitialData();
@@ -63,10 +71,11 @@ export default function OrderForm({ onClose, onSuccess }: OrderFormProps) {
 
     try {
       setLoadingData(true);
-      const [productsRes, customersRes, fieldsRes] = await Promise.all([
+      const [productsRes, customersRes, fieldsRes, settingsRes] = await Promise.all([
         fetch(`/api/products?workspace_id=${currentWorkspace.id}`),
         fetch(`/api/customers?workspace_id=${currentWorkspace.id}`),
-        fetch(`/api/order-field-definitions?workspace_id=${currentWorkspace.id}`)
+        fetch(`/api/order-field-definitions?workspace_id=${currentWorkspace.id}`),
+        fetch(`/api/workspaces/${currentWorkspace.id}/settings`)
       ]);
 
       if (productsRes.ok) {
@@ -82,6 +91,11 @@ export default function OrderForm({ onClose, onSuccess }: OrderFormProps) {
       if (fieldsRes.ok) {
         const fieldsData = await fieldsRes.json();
         setFieldDefinitions(fieldsData);
+      }
+
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        setAllowOrdersWithoutStock(settingsData.allow_orders_without_stock || false);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -192,6 +206,30 @@ export default function OrderForm({ onClose, onSuccess }: OrderFormProps) {
     }
   };
 
+  const openProductSelector = (index: number) => {
+    setSelectingForIndex(index);
+    setProductSelectorOpen(true);
+  };
+
+  const handleProductSelect = (product: Product) => {
+    // Validate stock if not allowed to order without stock
+    if (!allowOrdersWithoutStock && product.stock <= 0) {
+      alert(`No se puede agregar "${product.name}" porque no hay stock disponible. Para permitir pedidos sin stock, actualiza la configuración del workspace.`);
+      return;
+    }
+
+    if (selectingForIndex !== null) {
+      updateOrderItem(selectingForIndex, 'product_id', product.id);
+      
+      // Show warning if stock is low but allowed
+      if (allowOrdersWithoutStock && product.stock <= 0) {
+        console.warn(`Producto "${product.name}" agregado sin stock disponible`);
+      }
+    }
+    setProductSelectorOpen(false);
+    setSelectingForIndex(null);
+  };
+
   const filteredProducts = products.filter(product =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     product.sku?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -274,19 +312,25 @@ export default function OrderForm({ onClose, onSuccess }: OrderFormProps) {
                           <label className="block text-xs font-medium text-text-secondary mb-1.5">
                             Producto *
                           </label>
-                          <select
-                            value={item.product_id}
-                            onChange={(e) => updateOrderItem(index, 'product_id', e.target.value)}
-                            required
-                            className="w-full px-3 py-2 bg-input-bg border border-input-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                          <button
+                            type="button"
+                            onClick={() => openProductSelector(index)}
+                            className="w-full px-3 py-2 bg-input-bg border border-input-border rounded-lg text-sm text-left hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors"
                           >
-                            <option value="">Seleccionar producto...</option>
-                            {filteredProducts.map((product) => (
-                                <option key={product.id} value={product.id}>
-                                  {product.name} - S/. {product.price.toFixed(2)} (Stock: {product.stock})
-                                </option>
-                            ))}
-                          </select>
+                            {selectedProduct ? (
+                              <div>
+                                <div className="font-medium text-foreground truncate">
+                                  {selectedProduct.name}
+                                </div>
+                                <div className="text-xs text-text-tertiary mt-0.5">
+                                  S/. {selectedProduct.price.toFixed(2)} • Stock: {selectedProduct.stock}
+                                  {selectedProduct.sku && ` • SKU: ${selectedProduct.sku}`}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-text-tertiary">Seleccionar producto...</span>
+                            )}
+                          </button>
                         </div>
 
                         {/* Variant Selection */}
@@ -561,6 +605,22 @@ export default function OrderForm({ onClose, onSuccess }: OrderFormProps) {
             {loading ? 'Creando...' : 'Crear Pedido'}
           </button>
         </div>
+
+        {/* Product Selector Modal */}
+        <ProductSelectorModal
+          show={productSelectorOpen}
+          products={products}
+          selectedProductId={
+            selectingForIndex !== null 
+              ? orderItems[selectingForIndex]?.product_id 
+              : undefined
+          }
+          onSelect={handleProductSelect}
+          onClose={() => {
+            setProductSelectorOpen(false);
+            setSelectingForIndex(null);
+          }}
+        />
       </div>
     </div>
   );

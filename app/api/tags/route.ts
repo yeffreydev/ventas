@@ -1,7 +1,7 @@
 import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { checkWorkspaceAccess } from '@/app/utils/workspace-checks';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
 export async function GET(request: NextRequest) {
   try {

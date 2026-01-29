@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
         stock,
         price,
         image_url,
+        min_stock_alert,
         product_categories:category_id (
           id,
           name,
@@ -47,10 +48,6 @@ export async function GET(request: NextRequest) {
       query = query.eq('category_id', categoryId);
     }
 
-    if (lowStock === 'true') {
-      query = query.lte('stock', 10); // Products with stock <= 10
-    }
-
     if (search) {
       query = query.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
     }
@@ -62,7 +59,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json(products);
+    // Filter for low stock in JavaScript if requested
+    let filteredProducts = products;
+    if (lowStock === 'true' && products) {
+      filteredProducts = products.filter(product => {
+        const threshold = product.min_stock_alert || 10;
+        return (product.stock || 0) <= threshold;
+      });
+    }
+
+    return NextResponse.json(filteredProducts);
   } catch (error) {
     console.error('Internal server error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

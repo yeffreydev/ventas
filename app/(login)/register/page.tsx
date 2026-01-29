@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, Suspense } from "react";
-import { FcGoogle } from "react-icons/fc";
-import { AiFillApple } from "react-icons/ai";
 import { HiEye, HiEyeOff } from "react-icons/hi";
 import { FiArrowRight } from "react-icons/fi";
 import { createClient } from "../../utils/supabase/client";
@@ -272,7 +270,7 @@ function RegisterContent() {
             </div>
 
             {/* OAuth Buttons */}
-            <div className="space-y-3">
+           {/*  <div className="space-y-3">
               <button
                 type="button"
                 className="w-full inline-flex items-center justify-center py-3 px-4 border border-current/20 rounded-lg shadow-sm bg-background text-sm font-medium text-foreground hover:bg-hover-bg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all"
@@ -288,7 +286,7 @@ function RegisterContent() {
                 <AiFillApple className="w-5 h-5 mr-3" />
                 Registrarse con Apple
               </button>
-            </div>
+            </div>*/}
           </form>
 
         </div>

@@ -1,6 +1,7 @@
 import { createClient } from "@/app/utils/supabase/server";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { requirePermission } from "@/app/lib/permissions";
 
 export async function GET(request: Request) {
   try {
@@ -16,12 +17,20 @@ export async function GET(request: Request) {
         { status: 401 }
       );
     }
-
+    
     if (!workspaceId) {
         return NextResponse.json(
             { error: "Workspace ID is required" },
             { status: 400 }
         );
+    }
+
+    // Check permission with workspaceId
+    try {
+      await requirePermission(user.id, 'teams', workspaceId);
+    } catch (error) {
+       console.error('[GET /api/teams] Permission denied:', error);
+       return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
     }
 
     const { data: teams, error } = await supabase
@@ -87,6 +96,14 @@ export async function POST(request: Request) {
         { error: "Name and Workspace ID are required" },
         { status: 400 }
       );
+    }
+
+    // Check permission with workspaceId
+    try {
+      await requirePermission(user.id, 'teams', workspace_id);
+    } catch (error) {
+      console.error('[POST /api/teams] Permission denied:', error);
+      return NextResponse.json({ error: 'Forbidden: Insufficient permissions' }, { status: 403 });
     }
 
     const { data: team, error } = await supabase

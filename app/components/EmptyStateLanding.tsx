@@ -9,7 +9,7 @@ export default function EmptyStateLanding() {
   const [showCreateForm, setShowCreateForm] = useState(false);
 
   if (showCreateForm) {
-    return <CreateWorkspace isFirstWorkspace={true} />;
+    return <CreateWorkspace />;
   }
 
   return (

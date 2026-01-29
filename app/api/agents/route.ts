@@ -39,9 +39,30 @@ export async function GET(request: Request) {
         );
       }
 
-      // Extract agent profiles from the join
+      // Get emails for each agent from auth.users via RPC
       const agents = workspaceAgents.map(wa => wa.agent_profiles).filter(Boolean);
-      return NextResponse.json(agents);
+      
+      // Fetch user emails for all agents
+      const agentUserIds = agents.map((a: any) => a.user_id);
+      const { data: usersData } = await supabase
+        .from('agent_profiles')
+        .select('user_id')
+        .in('user_id', agentUserIds);
+
+      // Get emails from active_agents view which has email
+      const { data: activeAgentsData } = await supabase
+        .from('active_agents')
+        .select('user_id, email')
+        .in('user_id', agentUserIds);
+
+      // Merge email into agents
+      const emailMap = new Map((activeAgentsData || []).map((u: any) => [u.user_id, u.email]));
+      const agentsWithEmail = agents.map((agent: any) => ({
+        ...agent,
+        email: emailMap.get(agent.user_id) || null
+      }));
+
+      return NextResponse.json(agentsWithEmail);
     }
 
     // Fallback: fetch all agents (for backwards compatibility)

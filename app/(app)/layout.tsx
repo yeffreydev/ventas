@@ -31,8 +31,7 @@ import {
 import { createClient } from "../utils/supabase/client";
 import { useThemeContext } from "../providers/ThemeProvider";
 import { NotificationBell } from "../components/NotificationBell";
-import CreateWorkspace from "../components/CreateWorkspace";
-import EmptyStateLanding from "../components/EmptyStateLanding";
+import WorkspaceSelector from "../components/WorkspaceSelector";
 import { useWorkspace } from "../providers/WorkspaceProvider";
 import type { Permission } from "../types/roles-agents";
 
@@ -44,12 +43,12 @@ export default function AppLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [userPermissions, setUserPermissions] = useState<Record<string, any>>({});
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+  const [invitationCount, setInvitationCount] = useState(0);
   const pathname = usePathname();
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -59,7 +58,8 @@ export default function AppLayout({
   const { 
     workspaces, 
     currentWorkspace, 
-    userRole, 
+    userRole,
+    userPermissions,
     isLoading: isWorkspaceLoading,
     isSwitching,
     switchWorkspace
@@ -131,50 +131,29 @@ export default function AppLayout({
     };
   }, []);
 
-  // Invitation sync disabled for performance - notifications are disabled
-
-  // Fetch user permissions
+  // Fetch invitation count when user changes
   useEffect(() => {
-    // If we have a workspace role, we can simplify permissions or map them
-    if (userRole) {
-        // Simple mapping for now
-        if (userRole === 'admin') {
-            setUserPermissions({ all: true });
-        } else {
-            // Agent permissions - strict default
-            setUserPermissions({ 
-                chats: true, 
-                products: { view_published: true } 
-            }); 
-        }
+    const fetchInvitationCount = async () => {
+      if (!user) {
+        setInvitationCount(0);
         return;
-    }
-
-    // Fallback to old system if no workspace (unlikely if loop works)
-    const fetchPermissions = async () => {
-      if (!user) return;
-
+      }
       try {
-        const { data: roles } = await supabase.rpc("get_user_roles", {
-          user_uuid: user.id,
-        });
-
-        if (roles && roles.length > 0) {
-          const mergedPermissions: Record<string, any> = {};
-          roles.forEach((role: any) => {
-            if (role.permissions) {
-              Object.assign(mergedPermissions, role.permissions);
-            }
-          });
-          setUserPermissions(mergedPermissions);
+        const response = await fetch('/api/invitations?my_invitations=true&status=pending');
+        if (response.ok) {
+          const data = await response.json();
+          setInvitationCount(Array.isArray(data) ? data.length : 0);
         }
       } catch (error) {
-        console.error("Error fetching permissions:", error);
+        console.error("Error fetching invitation count:", error);
       }
     };
 
-    fetchPermissions();
-  }, [user, supabase, userRole]);
+    fetchInvitationCount();
+  }, [user]);
+
+  // Fetch user permissions is now handled by WorkspaceProvider
+  // No need for local fetchPermissions - we use userPermissions from context
 
   const allMenuItems = [
 
@@ -284,69 +263,78 @@ export default function AppLayout({
     setNavigatingTo(null);
   }, [pathname]);
 
-  // 1. Loading State
-  if (isLoading || (user && isWorkspaceLoading && !currentWorkspace && workspaces.length === 0)) {
+  // Automatic redirect if user has no workspace
+  useEffect(() => {
+    // Only redirect if we're done loading and user is authenticated
+    if (!isLoading && !isWorkspaceLoading && user) {
+      // Redirect to onboarding ONLY if no workspaces at all
+      if (workspaces.length === 0 && pathname !== '/onboarding' && pathname !== '/create-workspace') {
+        console.log('[Layout] No workspaces found, redirecting to onboarding');
+        router.replace('/onboarding'); // Use replace to avoid browser history
+        return;
+      }
+      
+      // DO NOT redirect if we have workspaces - let WorkspaceProvider handle auto-selection
+      // The WorkspaceProvider will automatically select a workspace based on:
+      // 1. localStorage (last used)
+      // 2. Supabase user metadata (default workspace)
+      // 3. First owned workspace or first available
+    }
+  }, [isLoading, isWorkspaceLoading, user, workspaces.length, pathname, router]);
+
+  // 1. Loading State - wait for BOTH auth AND workspace loading
+  if (isLoading || (user && isWorkspaceLoading)) {
        return (
         <div className="flex h-screen items-center justify-center bg-background">
-           <div className="flex flex-col items-center gap-4">
-              <div className="w-12 h-12 bg-primary/20 rounded-full animate-pulse"></div>
-              <div className="text-foreground animate-pulse">Cargando...</div>
-           </div>
+          <div className="flex flex-col items-center gap-6">
+            <div className="relative">
+              <div className="w-20 h-20 border-4 border-primary/20 rounded-full"></div>
+              <div className="w-20 h-20 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+            </div>
+            <div className="text-center">
+              <h3 className="text-xl font-semibold text-foreground mb-2">
+                {isWorkspaceLoading ? 'Cargando espacios de trabajo' : 'Iniciando sesión'}
+              </h3>
+              <p className="text-text-secondary animate-pulse" suppressHydrationWarning>
+                 {isWorkspaceLoading ? 'Preparando tu entorno...' : 'Verificando credenciales...'}
+              </p>
+            </div>
+          </div>
         </div>
        );
   }
 
-  // 2. No Workspace State (Onboarding)
-  if (user && !currentWorkspace && !isWorkspaceLoading && workspaces.length === 0) {
+  // 1.5. No workspaces state - show loading while redirecting to prevent flash of content
+  // This must catch ALL cases where user has no workspaces and isn't already on the right page
+  if (user && !isWorkspaceLoading) {
+    const isOnSpecialPage = pathname === '/onboarding' || pathname === '/create-workspace';
+    const hasNoWorkspaces = workspaces.length === 0;
+    
+    // Show loading screen if user has no workspaces and is NOT on onboarding/create pages
+    if (hasNoWorkspaces && !isOnSpecialPage) {
+      console.log('[Layout] No workspaces detected, showing loading screen before redirect');
       return (
-        <div className="min-h-screen bg-background flex flex-col">
-            {/* Simplified Header */}
-            <header className="h-16 border-b border-current/20 px-6 flex items-center justify-between bg-background sticky top-0 z-50">
-                <div className="flex items-center gap-2">
-                    <Image src="/botia.svg" alt="Botia" width={32} height={32} />
-                    <h1 className="text-xl font-bold text-primary hidden sm:block">Botia CRM</h1>
-                </div>
-                <div className="flex items-center gap-4">
-                     {/* Notification bell */}
-                    <NotificationBell />
-                    
-                     {/* Simplified User Profile - Just Avatar & SignOut */}
-                    <div className="relative">
-                        <button
-                         onClick={() => setDropdownOpen(!dropdownOpen)}
-                         className="flex items-center gap-2 p-1.5 hover:bg-hover-bg rounded-full transition-colors"
-                        >
-                            <img
-                             src={user?.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${user?.user_metadata?.display_name || user?.email}&background=6366f1&color=fff`}
-                             alt="Profile"
-                             className="w-8 h-8 rounded-full ring-2 ring-background"
-                            />
-                        </button>
-                        
-                         {dropdownOpen && (
-                            <div className="absolute right-0 mt-2 w-48 bg-background border border-current/20 rounded-lg shadow-lg py-1 z-50 animate-in fade-in slide-in-from-top-1">
-                                 <button
-                                     onClick={handleSignOut}
-                                     className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-hover-bg flex items-center gap-2"
-                                 >
-                                     <HiLogout className="w-4 h-4" />
-                                     Cerrar Sesión
-                                 </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </header>
-
-            {/* Main Content */}
-            <main className="flex-1 flex items-center justify-center p-6">
-                <EmptyStateLanding />
-            </main>
+        <div className="flex h-screen items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-6">
+            <div className="relative">
+              <div className="w-20 h-20 border-4 border-primary/20 rounded-full"></div>
+              <div className="w-20 h-20 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+            </div>
+            <div className="text-center">
+              <h3 className="text-xl font-semibold text-foreground mb-2">
+                Configurando tu cuenta
+              </h3>
+              <p className="text-text-secondary animate-pulse">
+                Redirigiendo al proceso de configuración...
+              </p>
+            </div>
+          </div>
         </div>
       );
+    }
   }
 
-  // 3. Workspace Switching Loader
+  // 2. Workspace Switching Loader
   if (isSwitching) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -393,9 +381,17 @@ export default function AppLayout({
                         className="flex items-center justify-between w-full hover:bg-hover-bg p-2 rounded-lg transition-colors group"
                     >
                         <div className="flex items-center gap-2 overflow-hidden mx-auto">
-                            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white font-bold shrink-0">
-                                {currentWorkspace?.name?.charAt(0).toUpperCase() || "B"}
-                            </div>
+                            {currentWorkspace?.image_url ? (
+                                <img 
+                                    src={`${currentWorkspace.image_url}?t=${currentWorkspace.updated_at || Date.now()}`}
+                                    alt={currentWorkspace.name}
+                                    className="w-8 h-8 rounded-lg object-cover bg-white"
+                                />
+                            ) : (
+                                <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white font-bold shrink-0">
+                                    {currentWorkspace?.name?.charAt(0).toUpperCase() || "B"}
+                                </div>
+                            )}
                             {!collapsed && (
                                 <span className="font-semibold text-foreground truncate">{currentWorkspace?.name || "Botia"}</span>
                             )}
@@ -424,9 +420,13 @@ export default function AppLayout({
                                                 className={`w-full text-left px-4 py-3 text-sm hover:bg-hover-bg transition-colors flex items-center justify-between ${currentWorkspace?.id === ws.id ? 'bg-primary/5 text-primary font-medium' : 'text-foreground'}`}
                                             >
                                                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                                                    <div className="w-6 h-6 bg-primary/20 rounded flex items-center justify-center text-primary font-bold text-xs flex-shrink-0">
-                                                        {ws.name.charAt(0).toUpperCase()}
-                                                    </div>
+                                                    {ws.image_url ? (
+                                                        <img src={`${ws.image_url}?t=${ws.updated_at || Date.now()}`} alt={ws.name} className="w-6 h-6 rounded object-cover bg-white flex-shrink-0" />
+                                                    ) : (
+                                                        <div className="w-6 h-6 bg-primary/20 rounded flex items-center justify-center text-primary font-bold text-xs flex-shrink-0">
+                                                            {ws.name.charAt(0).toUpperCase()}
+                                                        </div>
+                                                    )}
                                                     <span className="truncate">{ws.name}</span>
                                                 </div>
                                                 {currentWorkspace?.id === ws.id && (
@@ -453,7 +453,11 @@ export default function AppLayout({
                                                 className={`w-full text-left px-4 py-3 text-sm hover:bg-hover-bg transition-colors flex items-center justify-between ${currentWorkspace?.id === ws.id ? 'bg-primary/5 text-primary font-medium' : 'text-foreground'}`}
                                             >
                                                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                                                    <HiUser className="w-4 h-4 text-text-tertiary flex-shrink-0" />
+                                                    {ws.image_url ? (
+                                                        <img src={`${ws.image_url}?t=${ws.updated_at || Date.now()}`} alt={ws.name} className="w-6 h-6 rounded object-cover bg-white flex-shrink-0" />
+                                                    ) : (
+                                                        <HiUser className="w-4 h-4 text-text-tertiary flex-shrink-0" />
+                                                    )}
                                                     <span className="truncate">{ws.name}</span>
                                                 </div>
                                                 {currentWorkspace?.id === ws.id && (
@@ -634,6 +638,21 @@ export default function AppLayout({
                       <HiUser className="w-4 h-4 mr-3" />
                       Perfil
                     </button>
+                    <Link
+                      href="/invitations"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center justify-between w-full text-left px-4 py-2 text-sm text-foreground hover:bg-hover-bg transition-colors"
+                    >
+                      <span className="flex items-center">
+                        <HiMail className="w-4 h-4 mr-3" />
+                        Invitaciones
+                      </span>
+                      {invitationCount > 0 && (
+                        <span className="px-2 py-0.5 text-xs font-semibold bg-primary text-white rounded-full">
+                          {invitationCount}
+                        </span>
+                      )}
+                    </Link>
                     <div className="border-t border-current/20"></div>
                     <button
                       onClick={() => {
@@ -754,6 +773,21 @@ export default function AppLayout({
                         <HiUser className="w-4 h-4 mr-3" />
                         Perfil
                       </button>
+                      <Link
+                        href="/invitations"
+                        onClick={() => setDropdownOpen(false)}
+                        className="flex items-center justify-between w-full text-left px-4 py-2 text-sm text-foreground hover:bg-hover-bg transition-colors"
+                      >
+                        <span className="flex items-center">
+                          <HiMail className="w-4 h-4 mr-3" />
+                          Invitaciones
+                        </span>
+                        {invitationCount > 0 && (
+                          <span className="px-2 py-0.5 text-xs font-semibold bg-primary text-white rounded-full">
+                            {invitationCount}
+                          </span>
+                        )}
+                      </Link>
                       <div className="border-t border-current/20"></div>
                       <button
                         onClick={() => {

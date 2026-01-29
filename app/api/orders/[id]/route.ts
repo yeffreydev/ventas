@@ -2,6 +2,7 @@ import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { UpdateOrderInput } from '@/app/types/orders';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
 // GET /api/orders/[id] - Get a single order with details
 export async function GET(
@@ -17,6 +18,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // First fetch the order to get workspace_id (RLS will filter based on workspace access)
     const { data: order, error } = await supabase
       .from('orders')
       .select(`
@@ -41,7 +43,6 @@ export async function GET(
         )
       `)
       .eq('id', id)
-      .eq('user_id', user.id)
       .single();
 
     if (error) {
@@ -52,8 +53,13 @@ export async function GET(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // Verify user has access to this workspace
+    const hasAccess = await checkWorkspaceAccess(supabase, order.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
+    }
+
     // Fetch workspace name manually if not available via relation
-    // We try to get it from workspaces table
     let workspaceName = '';
     if (order.workspace_id) {
        const { data: workspace } = await supabase
@@ -100,22 +106,21 @@ export async function PUT(
       workspace_id
     } = body;
 
-    // Build the query to check if order exists - use workspace_id if provided, otherwise user_id
-    let existingOrderQuery = supabase
+    // Fetch existing order (RLS will filter)
+    const { data: existingOrder, error: fetchError } = await supabase
       .from('orders')
-      .select('id, status')
-      .eq('id', id);
-    
-    if (workspace_id) {
-      existingOrderQuery = existingOrderQuery.eq('workspace_id', workspace_id);
-    } else {
-      existingOrderQuery = existingOrderQuery.eq('user_id', user.id);
-    }
-
-    const { data: existingOrder, error: fetchError } = await existingOrderQuery.single();
+      .select('id, status, workspace_id')
+      .eq('id', id)
+      .single();
 
     if (fetchError || !existingOrder) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    }
+
+    // Verify user has access to this workspace
+    const hasAccess = await checkWorkspaceAccess(supabase, existingOrder.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Unauthorized workspace access' }, { status: 403 });
     }
 
     // Validate status transitions
@@ -158,13 +163,11 @@ export async function PUT(
               }
             } catch (stockError) {
               console.error('Error restoring stock for item:', item, stockError);
-              // Continue with other items even if one fails
             }
           }
         }
       } catch (error) {
         console.error('Error fetching order items for stock restoration:', error);
-        // Don't block the cancellation if stock restoration fails
       }
     }
 
@@ -182,19 +185,11 @@ export async function PUT(
     if (custom_fields !== undefined) updateData.custom_fields = custom_fields;
     if (metadata !== undefined) updateData.metadata = metadata;
 
-    // Update order - use workspace_id if provided, otherwise user_id
-    let updateQuery = supabase
+    // Update order
+    const { data: order, error: updateError } = await supabase
       .from('orders')
       .update(updateData)
-      .eq('id', id);
-    
-    if (workspace_id) {
-      updateQuery = updateQuery.eq('workspace_id', workspace_id);
-    } else {
-      updateQuery = updateQuery.eq('user_id', user.id);
-    }
-
-    const { data: order, error: updateError } = await updateQuery
+      .eq('id', id)
       .select(`
         *,
         order_items (
@@ -243,44 +238,32 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Check if order exists and belongs to user
+    // Check if order exists (RLS will filter)
     const { data: existingOrder, error: fetchError } = await supabase
       .from('orders')
-      .select('id, status, order_items(product_id, product_variant_id, quantity)')
+      .select('id, status, workspace_id, order_items(product_id, product_variant_id, quantity)')
       .eq('id', id)
-      .eq('user_id', user.id)
       .single();
 
     if (fetchError || !existingOrder) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
-    // Check if order can be cancelled
-    if (existingOrder.status === 'completed') {
-      return NextResponse.json(
-        { error: 'Cannot cancel completed order' },
-        { status: 400 }
-      );
+    // Verify user has access to this workspace
+    const hasAccess = await checkWorkspaceAccess(supabase, existingOrder.workspace_id, user.id);
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Acceso no autorizado al espacio de trabajo' }, { status: 403 });
     }
 
-    if (existingOrder.status === 'cancelled') {
-      return NextResponse.json(
-        { error: 'Order is already cancelled' },
-        { status: 400 }
-      );
-    }
-
-    // Restore product stock before cancelling
-    if (existingOrder.order_items) {
+    // Restore product stock before deleting (only if not already cancelled to avoid double restore)
+    if (existingOrder.status !== 'cancelled' && existingOrder.order_items) {
       for (const item of existingOrder.order_items) {
         if (item.product_variant_id) {
-          // Restore variant stock
           await supabase.rpc('increment_variant_stock', {
             variant_id: item.product_variant_id,
             quantity: item.quantity
           });
         } else if (item.product_id) {
-          // Restore product stock
           await supabase.rpc('increment_product_stock', {
             product_id: item.product_id,
             quantity: item.quantity
@@ -289,29 +272,23 @@ export async function DELETE(
       }
     }
 
-    // Update order status to cancelled instead of deleting
-    const { data: order, error: updateError } = await supabase
+    // Delete the order permanently
+    const { error: deleteError } = await supabase
       .from('orders')
-      .update({
-        status: 'cancelled',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .select()
-      .single();
+      .delete()
+      .eq('id', id);
 
-    if (updateError) {
-      console.error('Error cancelling order:', updateError);
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (deleteError) {
+      console.error('Error deleting order:', deleteError);
+      return NextResponse.json({ error: 'Error al eliminar el pedido: ' + deleteError.message }, { status: 500 });
     }
 
     return NextResponse.json({
-      message: 'Order cancelled successfully',
-      order
+      message: 'Pedido eliminado correctamente'
     });
+
   } catch (error) {
-    console.error('Internal server error cancelling order:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('Internal server error deleting order:', error);
+    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

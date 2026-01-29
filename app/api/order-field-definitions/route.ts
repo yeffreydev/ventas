@@ -1,18 +1,8 @@
 import { createClient } from '@/app/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
-async function checkWorkspaceAccess(supabase: any, workspaceId: string, userId: string): Promise<boolean> {
-  if (!workspaceId) return false;
-  const { data, error } = await supabase
-    .from('workspace_members')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('user_id', userId)
-    .single();
-
-  return !error && !!data;
-}
 
 // GET /api/order-field-definitions - List all field definitions for workspace
 export async function GET(request: NextRequest) {

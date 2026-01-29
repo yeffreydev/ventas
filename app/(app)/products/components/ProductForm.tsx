@@ -29,6 +29,7 @@ interface Product {
   image_url?: string;
   category_id?: string;
   variants?: ProductVariant[];
+  min_stock_alert?: number;
 }
 
 interface ProductFormProps {
@@ -48,12 +49,14 @@ export default function ProductForm({ show, onClose, onSubmit, initialData }: Pr
     stock: 0,
     image_url: '',
     category_id: '',
-    variants: []
+    variants: [],
+    min_stock_alert: undefined
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [defaultMinStockAlert, setDefaultMinStockAlert] = useState<number>(10);
   const [newVariant, setNewVariant] = useState<ProductVariant>({
     name: '',
     price: 0,
@@ -66,6 +69,7 @@ export default function ProductForm({ show, onClose, onSubmit, initialData }: Pr
   useEffect(() => {
     if (currentWorkspace && show) {
       fetchCategories();
+      fetchWorkspaceSettings();
     }
   }, [currentWorkspace, show]);
 
@@ -80,6 +84,20 @@ export default function ProductForm({ show, onClose, onSubmit, initialData }: Pr
       }
     } catch (error) {
       console.error('Error fetching categories:', error);
+    }
+  };
+
+  const fetchWorkspaceSettings = async () => {
+    if (!currentWorkspace) return;
+    
+    try {
+      const response = await fetch(`/api/workspaces/${currentWorkspace.id}/settings`);
+      if (response.ok) {
+        const data = await response.json();
+        setDefaultMinStockAlert(data.default_min_stock_alert || 10);
+      }
+    } catch (error) {
+      console.error('Error fetching workspace settings:', error);
     }
   };
 
@@ -98,7 +116,8 @@ export default function ProductForm({ show, onClose, onSubmit, initialData }: Pr
         stock: 0,
         image_url: '',
         category_id: '',
-        variants: []
+        variants: [],
+        min_stock_alert: undefined
       });
     }
   }, [initialData, show]);
@@ -253,33 +272,135 @@ export default function ProductForm({ show, onClose, onSubmit, initialData }: Pr
                   </div>
                   <div>
                     <label htmlFor="stock" className="block text-sm font-semibold text-foreground mb-2">
-                      Stock
+                      Stock Inicial
                     </label>
-                    <input
-                      id="stock"
-                      name="stock"
-                      type="number"
-                      value={formData.stock === 0 ? '' : formData.stock}
-                      onChange={handleChange}
-                      className="w-full px-3 py-2 border border-input-border rounded-lg bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-colors"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        id="stock"
+                        name="stock"
+                        type="number"
+                        value={formData.stock === 0 ? '' : formData.stock}
+                        onChange={handleChange}
+                        className="w-full px-3 py-2 border border-input-border rounded-lg bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-colors"
+                      />
+                    </div>
                   </div>
                 </div>
 
+                {/* Quick Stock Buttons */}
                 <div>
-                  <label htmlFor="sku" className="block text-sm font-semibold text-foreground mb-2">
-                    SKU (Código)
+                  <label className="block text-sm font-semibold text-foreground mb-2">
+                    Agregar rápido
                   </label>
-                  <input
-                    id="sku"
-                    name="sku"
-                    type="text"
-                    value={formData.sku || ''}
-                    onChange={handleChange}
-                    placeholder="Ej. CAM-001"
-                    className="w-full px-3 py-2 border border-input-border rounded-lg bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-colors"
-                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, stock: (prev.stock || 0) + 10 }))}
+                      className="px-3 py-1.5 text-sm bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+                    >
+                      +10
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, stock: (prev.stock || 0) + 50 }))}
+                      className="px-3 py-1.5 text-sm bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+                    >
+                      +50
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, stock: (prev.stock || 0) + 100 }))}
+                      className="px-3 py-1.5 text-sm bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+                    >
+                      +100
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, stock: 0 }))}
+                      className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ml-auto"
+                    >
+                      Limpiar
+                    </button>
+                  </div>
+                  {formData.stock && formData.stock > 0 && (
+                    <p className="text-sm text-text-secondary mt-1">
+                      Total: <span className="font-semibold text-foreground">{formData.stock.toLocaleString()}</span> unidades
+                    </p>
+                  )}
                 </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="sku" className="block text-sm font-semibold text-foreground mb-2">
+                      SKU (Código)
+                    </label>
+                    <input
+                      id="sku"
+                      name="sku"
+                      type="text"
+                      value={formData.sku || ''}
+                      onChange={handleChange}
+                      placeholder="Ej. CAM-001"
+                      className="w-full px-3 py-2 border border-input-border rounded-lg bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="min_stock_alert" className="block text-sm font-semibold text-foreground mb-2">
+                      Alerta de Stock Bajo
+                      <span className="ml-1 text-xs text-text-tertiary font-normal">(opcional)</span>
+                    </label>
+                    <input
+                      id="min_stock_alert"
+                      name="min_stock_alert"
+                      type="number"
+                      value={formData.min_stock_alert === undefined ? '' : formData.min_stock_alert}
+                      onChange={(e) => setFormData(prev => ({
+                        ...prev,
+                        min_stock_alert: e.target.value === '' ? undefined : parseInt(e.target.value)
+                      }))}
+                      placeholder={`Por defecto: ${defaultMinStockAlert}`}
+                      className="w-full px-3 py-2 border border-input-border rounded-lg bg-input-bg text-foreground placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-colors"
+                    />
+                    <p className="text-xs text-text-tertiary mt-1">
+                      Aviso cuando stock ≤ este número. Si no se especifica, se usa {defaultMinStockAlert}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Stock Level Indicator */}
+                {formData.stock !== undefined && formData.stock >= 0 && (
+                  <div className="p-3 rounded-lg border border-border bg-hover-bg">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">Estado del Stock:</span>
+                      {(() => {
+                        const threshold = formData.min_stock_alert || 10;
+                        const stock = formData.stock || 0;
+                        
+                        if (stock === 0) {
+                          return (
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">
+                              Sin Stock
+                            </span>
+                          );
+                        } else if (stock <= threshold) {
+                          return (
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300">
+                              Stock Bajo
+                            </span>
+                          );
+                        } else {
+                          return (
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                              Stock Normal
+                            </span>
+                          );
+                        }
+                      })()}
+                    </div>
+                  </div>
+                )}
+
 
                 <div>
                   <label htmlFor="category" className="block text-sm font-semibold text-foreground mb-2">

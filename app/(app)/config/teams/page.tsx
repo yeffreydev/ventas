@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { HiTrash, HiUserCircle, HiMail, HiClipboard, HiCheck, HiShieldCheck } from "react-icons/hi";
+import { HiTrash, HiUserCircle, HiMail, HiClipboard, HiCheck, HiShieldCheck, HiPencil } from "react-icons/hi";
 import type { Role, UserRole, AgentProfile } from "@/app/types/roles-agents";
 import type { PendingInvitation } from "@/app/types/invitations";
 import { useWorkspace } from "@/app/providers/WorkspaceProvider";
@@ -18,6 +18,7 @@ interface User {
 interface AgentWithRole extends AgentProfile {
   role_id?: string;
   role_name?: string;
+  email?: string;
 }
 
 interface RoleAssignmentConfirmation {
@@ -25,6 +26,11 @@ interface RoleAssignmentConfirmation {
   agentName: string;
   roleId: string;
   roleName: string;
+}
+
+interface EditingAgentName {
+  userId: string;
+  currentName: string;
 }
 
 export default function TeamsPage() {
@@ -44,6 +50,8 @@ export default function TeamsPage() {
   const [roleAssignmentConfirmation, setRoleAssignmentConfirmation] = useState<RoleAssignmentConfirmation | null>(null);
   const [assigningRole, setAssigningRole] = useState(false);
   const [sendingInvitation, setSendingInvitation] = useState(false);
+  const [editingAgentName, setEditingAgentName] = useState<EditingAgentName | null>(null);
+  const [savingAgentName, setSavingAgentName] = useState(false);
 
   const { currentWorkspace } = useWorkspace();
 
@@ -263,6 +271,45 @@ export default function TeamsPage() {
     }
   };
 
+  const handleSaveAgentName = async () => {
+    if (!editingAgentName || !currentWorkspace) return;
+
+    // Optimistic update
+    const previousAgents = [...agents];
+    setAgents(agents.map(a => 
+      a.user_id === editingAgentName.userId 
+        ? { ...a, display_name: editingAgentName.currentName } 
+        : a
+    ));
+
+    setSavingAgentName(true);
+    try {
+      const response = await fetch("/api/agents", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: editingAgentName.userId,
+          display_name: editingAgentName.currentName,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update agent name");
+      }
+      
+      // Success - invite fetch to refresh (optional but good for consistency)
+      await fetchData();
+    } catch (err) {
+      console.error("Error updating agent name:", err);
+      setError("Error al actualizar el nombre del agente");
+      // Revert optimistic update
+      setAgents(previousAgents);
+    } finally {
+      setSavingAgentName(false);
+      setEditingAgentName(null);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -370,16 +417,6 @@ export default function TeamsPage() {
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center justify-between pt-2 border-t border-yellow-200 dark:border-yellow-800">
-                    <span className="text-text-secondary">Expira:</span>
-                    <span className="font-medium text-foreground">
-                      {new Date(invitation.expires_at).toLocaleDateString('es-ES', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric'
-                      })}
-                    </span>
-                  </div>
                 </div>
               </div>
             ))}
@@ -440,9 +477,49 @@ export default function TeamsPage() {
                       {agent.display_name?.charAt(0)?.toUpperCase() || "A"}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h4 className="font-medium text-foreground truncate">
-                        {agent.display_name || "Agente"}
-                      </h4>
+                      {/* Editable Name */}
+                      <div className="flex items-center gap-2">
+                        {editingAgentName?.userId === agent.user_id ? (
+                          <div className="flex items-center gap-1 w-full">
+                            <input 
+                              type="text"
+                              value={editingAgentName.currentName}
+                              onChange={(e) => setEditingAgentName({ ...editingAgentName, currentName: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveAgentName();
+                                if (e.key === 'Escape') setEditingAgentName(null);
+                              }}
+                              autoFocus
+                              className="w-full px-2 py-0.5 text-sm bg-input-bg border border-primary rounded focus:outline-none"
+                            />
+                            <button
+                               onClick={handleSaveAgentName}
+                               className="p-1 hover:bg-green-100 text-green-600 rounded"
+                            >
+                              <HiCheck className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 group">
+                            <h4 className="font-medium text-foreground truncate" title={agent.display_name || "Agente"}>
+                              {agent.display_name || "Agente"}
+                            </h4>
+                            <button 
+                              onClick={() => setEditingAgentName({ userId: agent.user_id, currentName: agent.display_name || "" })}
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-hover-bg rounded transition-opacity"
+                              title="Editar nombre"
+                            >
+                              <HiPencil className="w-3 h-3 text-text-secondary" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {agent.email && (
+                        <p className="text-xs text-text-secondary truncate">
+                          {agent.email}
+                        </p>
+                      )}
                       <div className="flex items-center gap-2 mt-1">
                         <span
                           className={`inline-block w-2 h-2 rounded-full ${

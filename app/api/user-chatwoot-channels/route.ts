@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/app/utils/supabase/server';
 import { cookies } from 'next/headers';
-import { checkWorkspaceAccess } from '@/app/utils/workspace-checks';
+import { checkWorkspaceAccess } from '@/app/lib/workspace-access';
 
 // GET - Obtener todos los canales del usuario autenticado en un workspace
 export async function GET(request: NextRequest) {
